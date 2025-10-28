@@ -1,127 +1,155 @@
 -- programs/stairs.lua
 -- Mines stairs in a specified direction (up or down)
+-- Refactored to use worker library
 
-local function checkFuelAndRefuel()
-    local fuelLevel = turtle.getFuelLevel()
-    if fuelLevel == "unlimited" then
-        return true
-    end
+local SwarmWorker = require("lib.swarm_worker_lib")
 
-    if fuelLevel < 50 then
-        sendStatus("Low fuel (" .. fuelLevel .. "), refueling...", true)
+-- Get command line arguments
+local args = {...}
 
-        for slot = 1, 16 do
-            turtle.select(slot)
-            if turtle.refuel(0) then
-                turtle.refuel(1)
-                sendStatus("Refueled! New level: " .. turtle.getFuelLevel(), true)
-                turtle.select(1)
-                return true
-            end
+-- Parse arguments
+local depth = SwarmWorker.getNumericArg(args, 1, 1, 1000)
+local direction = SwarmWorker.getStringArg(args, 2, {"up", "down"}, "up")
+
+if not depth then
+    SwarmWorker.sendStatus("Usage: stairs <depth> [up|down]", false)
+    return
+end
+
+if not direction then
+    SwarmWorker.sendStatus("Invalid direction. Use 'up' or 'down'", false)
+    return
+end
+
+-- Initialize session
+SwarmWorker.initSession(args)
+SwarmWorker.sendStatus("Mining " .. depth .. " step staircase going " .. direction, true)
+
+-- Create progress tracker
+local progress = SwarmWorker.ProgressTracker.new(depth, 10)
+
+-- Staircase building functions
+local function buildStaircaseUp(steps, progress)
+    for i = 1, steps do
+        if not SwarmWorker.ensureFuel() then
+            SwarmWorker.sendStatus("Stopped at step " .. i .. " (no fuel)", false)
+            return false
         end
-
-        sendStatus("ERROR: No fuel available!", false)
-        return false
+        
+        -- Dig forward path
+        local success, err = SwarmWorker.digDirection("forward", 5)
+        if not success then
+            SwarmWorker.sendStatus("Could not dig forward at step " .. i .. ": " .. err, false)
+        end
+        
+        -- Move forward
+        if not SwarmWorker.forward() then
+            SwarmWorker.sendStatus("Could not move forward at step " .. i, false)
+            return false
+        end
+        
+        -- Dig above for headroom
+        SwarmWorker.digDirection("up", 3) -- Don't fail if can't dig up
+        
+        -- Move up one level
+        if not SwarmWorker.up() then
+            SwarmWorker.sendStatus("Could not move up at step " .. i, false)
+            return false
+        end
+        
+        progress:increment()
+        
+        -- Position report every 10 steps
+        if i % 10 == 0 then
+            SwarmWorker.reportPosition()
+        end
     end
-
+    
     return true
 end
 
--- Get parameters from args
-local depth = tonumber(args[1])
-local direction = args[2] or "up" -- Default to up if not specified
-
-if not depth or depth <= 0 then
-    sendStatus("Invalid depth argument", false)
-    return
-end
-
-if direction ~= "up" and direction ~= "down" then
-    sendStatus("Direction must be 'up' or 'down'", false)
-    return
-end
-
-sendStatus("Mining " .. depth .. " block staircase going " .. direction, true)
-
--- Initial fuel check
-if not checkFuelAndRefuel() then
-    sendStatus("Insufficient fuel to start", false)
-    return
-end
-
-local stepsMined = 0
-
--- Main mining loop
-if direction == "up" then
-    -- Mine stairs going UP
-    for i = 1, depth do
-        if not checkFuelAndRefuel() then
-            sendStatus("Stopped at step " .. stepsMined .. " (no fuel)", false)
-            return
-        end
-
-        -- Dig out the step in front
-        while not turtle.forward() do
-            turtle.dig()
-            turtle.attack()
-            os.sleep(0.5)
+local function buildStaircaseDown(steps, progress)
+    for i = 1, steps do
+        if not SwarmWorker.ensureFuel() then
+            SwarmWorker.sendStatus("Stopped at step " .. i .. " (no fuel)", false)
+            return false
         end
         
-        -- Dig above for headroom
-        while turtle.detectUp() do
-            turtle.digUp()
-            os.sleep(0.5)
+        -- Dig forward path
+        local success, err = SwarmWorker.digDirection("forward", 5)
+        if not success then
+            SwarmWorker.sendStatus("Could not dig forward at step " .. i .. ": " .. err, false)
         end
         
-        -- Move up one step
-        while not turtle.up() do
-            turtle.digUp()
-            turtle.attackUp()
-            os.sleep(0.5)
+        -- Move forward
+        if not SwarmWorker.forward() then
+            SwarmWorker.sendStatus("Could not move forward at step " .. i, false)
+            return false
         end
         
-        stepsMined = stepsMined + 1
+        -- Dig down for the step
+        local success, err = SwarmWorker.digDirection("down", 5)
+        if not success then
+            SwarmWorker.sendStatus("Could not dig down at step " .. i .. ": " .. err, false)
+        end
         
-        -- Report progress every 10 steps
-        if stepsMined % 10 == 0 then
-            sendStatus("Progress: " .. stepsMined .. "/" .. depth .. " steps", true)
+        -- Move down one level
+        if not SwarmWorker.down() then
+            SwarmWorker.sendStatus("Could not move down at step " .. i, false)
+            return false
+        end
+        
+        progress:increment()
+        
+        -- Position report every 10 steps
+        if i % 10 == 0 then
+            SwarmWorker.reportPosition()
         end
     end
+    
+    return true
+end
+
+-- Create staircase task
+local stairTask = SwarmWorker.Task.new("Staircase Mining", "Build " .. direction .. " staircase")
+
+stairTask:addStep("Prepare for staircase", function()
+    -- Estimate fuel needed: each step requires movement + digging
+    local fuelNeeded = depth * 3 + 50 -- Conservative estimate
+    local hasEnough, message = SwarmWorker.ensureFuel(fuelNeeded)
+    if not hasEnough then
+        error("Insufficient fuel: " .. message)
+    end
+    
+    SwarmWorker.sendStatus("Fuel sufficient for " .. depth .. " steps", true)
+    return true
+end)
+
+stairTask:addStep("Build staircase", function()
+    if direction == "up" then
+        return buildStaircaseUp(depth, progress)
+    else
+        return buildStaircaseDown(depth, progress)
+    end
+end)
+
+stairTask:addStep("Final report", function()
+    local inventoryInfo = SwarmWorker.getInventoryInfo()
+    local fuelRemaining = turtle.getFuelLevel()
+    
+    local summary = string.format("Staircase complete! Steps: %d %s, Items: %d, Fuel: %s",
+                                 depth, direction, inventoryInfo.totalItems, tostring(fuelRemaining))
+    
+    SwarmWorker.sendStatus(summary, true)
+    return true
+end)
+
+-- Execute the task
+local success, err = stairTask:execute()
+
+-- End session with final status
+if success then
+    SwarmWorker.endSession(true, "Staircase construction completed successfully")
 else
-    -- Mine stairs going DOWN
-    for i = 1, depth do
-        if not checkFuelAndRefuel() then
-            sendStatus("Stopped at step " .. stepsMined .. " (no fuel)", false)
-            return
-        end
-
-        -- Dig out the step in front
-        while not turtle.forward() do
-            turtle.dig()
-            turtle.attack()
-            os.sleep(0.5)
-        end
-        
-        -- Dig above for headroom
-        while turtle.detectUp() do
-            turtle.digUp()
-            os.sleep(0.5)
-        end
-        
-        -- Dig below and move down one step
-        while not turtle.down() do
-            turtle.digDown()
-            turtle.attackDown()
-            os.sleep(0.5)
-        end
-        
-        stepsMined = stepsMined + 1
-        
-        -- Report progress every 10 steps
-        if stepsMined % 10 == 0 then
-            sendStatus("Progress: " .. stepsMined .. "/" .. depth .. " steps", true)
-        end
-    end
+    SwarmWorker.endSession(false, "Staircase construction failed: " .. tostring(err))
 end
-
-sendStatus("Staircase complete! Mined " .. stepsMined .. " steps going " .. direction, true)

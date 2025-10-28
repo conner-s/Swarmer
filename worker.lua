@@ -1,137 +1,141 @@
--- Production Worker v2.4
+-- Production Worker v3.0
 -- Turtle swarm worker - handles remote commands and program execution
--- Version: 2.4
--- Latest change: 
+-- Refactored to use common libraries for reduced duplication
 
-local COMMAND_CHANNEL = 100
-local REPLY_CHANNEL = 101
+local SwarmCommon = require("lib.swarm_common")
+local SwarmWorker = require("lib.swarm_worker_lib")
+
+-- Worker configuration
+local WORKER_VERSION = "3.0"
 local PROGRAMS_DIR = "programs"
-local WORKER_VERSION = "2.4"
 
+-- Worker state
 local turtleID = os.getComputerID()
 local shellSessions = {}
 local sessionCounter = 0
-local programDeployments = {} -- Track incoming program deployments
+local programDeployments = {}
 
--- Setup modem with error handling
-local modem = peripheral.find("modem")
+-- Initialize modem
+local modem, err = SwarmCommon.initModem()
 if not modem then
-    print("ERROR: No modem found!")
+    print("ERROR: " .. err)
     print("Install a wireless modem and restart")
     return
 end
 
-modem.open(COMMAND_CHANNEL)
-modem.open(REPLY_CHANNEL)
+SwarmCommon.openChannels(modem, {SwarmCommon.COMMAND_CHANNEL})
 
 print("Worker Turtle #" .. turtleID .. " online v" .. WORKER_VERSION)
-print("Listening on channel " .. COMMAND_CHANNEL)
+print("Listening on channel " .. SwarmCommon.COMMAND_CHANNEL)
 
--- Message sending
+-- Enhanced message sending with version info
 local function sendMessage(messageType, content, sessionId, success)
-    local message = {
-        id = turtleID,
-        timestamp = os.epoch("utc"),
-        version = WORKER_VERSION
+    local options = {
+        version = WORKER_VERSION,
+        sessionId = sessionId,
+        success = success
     }
     
-    if messageType == "status" then
-        message.message = content
-        message.success = success
-    elseif messageType == "shell" then
-        message.shellOutput = content
-        message.sessionId = sessionId
-    elseif messageType == "prompt" then
-        message.shellPrompt = content
-        message.sessionId = sessionId
-    elseif messageType == "info" then
-        message.sessionInfo = content
-        message.sessionId = sessionId
-    end
-    
-    modem.transmit(REPLY_CHANNEL, COMMAND_CHANNEL, message)
+    local message = SwarmCommon.createMessage(messageType, content, options)
+    return SwarmCommon.sendMessage(modem, message, SwarmCommon.REPLY_CHANNEL, SwarmCommon.COMMAND_CHANNEL)
 end
 
--- Session creation
+-- Session management with enhanced tracking
 local function createSession(sessionId)
     local session = {
         id = sessionId,
         active = true,
-        tabId = nil,
-        workingDir = shell.dir()
+        workingDir = shell.dir(),
+        created = os.epoch("utc")
     }
     
+    shellSessions[sessionId] = session
+    
     if multishell then
-        sendMessage("info", "Shell session #" .. sessionId .. " created (remote only)", sessionId)
+        sendMessage(SwarmCommon.MESSAGE_TYPES.INFO, "Shell session #" .. sessionId .. " created (remote only)", sessionId)
     else
-        sendMessage("info", "Shell session #" .. sessionId .. " created (no multishell)", sessionId)
+        sendMessage(SwarmCommon.MESSAGE_TYPES.INFO, "Shell session #" .. sessionId .. " created (no multishell)", sessionId)
     end
     
-    shellSessions[sessionId] = session
-    sendMessage("shell", "Remote shell #" .. sessionId .. " ready\n", sessionId)
-    sendMessage("prompt", session.workingDir .. "> ", sessionId)
+    sendMessage(SwarmCommon.MESSAGE_TYPES.SHELL, "Remote shell #" .. sessionId .. " ready\n", sessionId)
+    sendMessage(SwarmCommon.MESSAGE_TYPES.PROMPT, session.workingDir .. "> ", sessionId)
     
     return session
 end
 
--- Command execution
+-- Enhanced command execution with better error handling
 local function executeShellCommand(sessionId, input)
     local session = shellSessions[sessionId]
     if not session or not session.active then
-        sendMessage("info", "Session #" .. sessionId .. " not available", sessionId)
+        sendMessage(SwarmCommon.MESSAGE_TYPES.INFO, "Session #" .. sessionId .. " not available", sessionId)
         return
     end
     
+    -- Store original directory
     local originalDir = shell.dir()
     shell.setDir(session.workingDir)
     
-    sendMessage("info", "Executing: '" .. input .. "' in " .. session.workingDir, sessionId)
+    sendMessage(SwarmCommon.MESSAGE_TYPES.INFO, "Executing: '" .. input .. "' in " .. session.workingDir, sessionId)
     
-    -- Built-in commands
-    if input == "help" or input == "?" then
-        sendMessage("shell", "Available: ls, cd, mkdir, rm, cp, mv, edit, programs, etc.\n", sessionId)
-        sendMessage("prompt", session.workingDir .. "> ", sessionId)
-        return
-    elseif input == "pwd" then
-        sendMessage("shell", session.workingDir .. "\n", sessionId)
-        sendMessage("prompt", session.workingDir .. "> ", sessionId)
-        return
-    elseif input:match("^echo%s+") then
-        local text = input:match("^echo%s+(.+)")
-        sendMessage("shell", text .. "\n", sessionId)
-        sendMessage("prompt", session.workingDir .. "> ", sessionId)
-        return
-    elseif input == "ls" or input == "dir" then
-        local files = fs.list(session.workingDir)
-        table.sort(files)
-        local output = {}
-        for _, file in ipairs(files) do
-            if fs.isDir(fs.combine(session.workingDir, file)) then
-                table.insert(output, file .. "/")
+    -- Built-in command handlers
+    local builtinCommands = {
+        help = function()
+            return "Available: ls, cd, mkdir, rm, cp, mv, edit, programs, etc.\n"
+        end,
+        
+        pwd = function()
+            return session.workingDir .. "\n"
+        end,
+        
+        echo = function()
+            local text = input:match("^echo%s+(.+)")
+            return text and (text .. "\n") or "\n"
+        end,
+        
+        ls = function()
+            local files = fs.list(session.workingDir)
+            table.sort(files)
+            local output = {}
+            for _, file in ipairs(files) do
+                if fs.isDir(fs.combine(session.workingDir, file)) then
+                    table.insert(output, file .. "/")
+                else
+                    table.insert(output, file)
+                end
+            end
+            return table.concat(output, "  ") .. "\n"
+        end,
+        
+        cd = function()
+            local targetDir = input:match("^cd%s+(.+)") or ""
+            if targetDir == "" then
+                session.workingDir = ""
+                return ""
             else
-                table.insert(output, file)
+                local newDir = fs.combine(session.workingDir, targetDir)
+                if fs.exists(newDir) and fs.isDir(newDir) then
+                    session.workingDir = newDir
+                    return ""
+                else
+                    return "cd: no such directory: " .. targetDir .. "\n"
+                end
             end
         end
-        sendMessage("shell", table.concat(output, "  ") .. "\n", sessionId)
-        sendMessage("prompt", session.workingDir .. "> ", sessionId)
-        return
-    elseif input:match("^cd%s*") then
-        local targetDir = input:match("^cd%s+(.+)") or ""
-        if targetDir == "" then
-            session.workingDir = ""
-        else
-            local newDir = fs.combine(session.workingDir, targetDir)
-            if fs.exists(newDir) and fs.isDir(newDir) then
-                session.workingDir = newDir
-            else
-                sendMessage("shell", "cd: no such directory: " .. targetDir .. "\n", sessionId)
-            end
+    }
+    
+    -- Check for built-in commands
+    local command = input:match("^(%S+)")
+    if builtinCommands[command] or command == "dir" and builtinCommands.ls then
+        local handler = builtinCommands[command] or builtinCommands.ls
+        local output = handler()
+        if output and output ~= "" then
+            sendMessage(SwarmCommon.MESSAGE_TYPES.SHELL, output, sessionId)
         end
-        sendMessage("prompt", session.workingDir .. "> ", sessionId)
+        sendMessage(SwarmCommon.MESSAGE_TYPES.PROMPT, session.workingDir .. "> ", sessionId)
         return
     end
     
-    -- Standard command execution
+    -- Standard command execution with output capture
     local output = {}
     local oldPrint = print
     local oldWrite = write
@@ -148,49 +152,52 @@ local function executeShellCommand(sessionId, input)
         end
     end
     
-    local success, err = pcall(function()
+    local success, err = SwarmCommon.safeCall(function()
         shell.run(input)
     end)
     
+    -- Restore session state
     session.workingDir = shell.dir()
-    
     print = oldPrint
     write = oldWrite
     shell.setDir(originalDir)
     
+    -- Send output
     local outputText = table.concat(output)
     if outputText and outputText ~= "" then
-        sendMessage("shell", outputText, sessionId)
+        sendMessage(SwarmCommon.MESSAGE_TYPES.SHELL, outputText, sessionId)
     elseif success then
-        sendMessage("shell", "(command completed)\n", sessionId)
+        sendMessage(SwarmCommon.MESSAGE_TYPES.SHELL, "(command completed)\n", sessionId)
     end
     
     if not success then
-        sendMessage("shell", "Error: " .. tostring(err) .. "\n", sessionId)
+        sendMessage(SwarmCommon.MESSAGE_TYPES.SHELL, "Error: " .. tostring(err) .. "\n", sessionId)
     end
     
-    sendMessage("prompt", session.workingDir .. "> ", sessionId)
+    sendMessage(SwarmCommon.MESSAGE_TYPES.PROMPT, session.workingDir .. "> ", sessionId)
 end
 
--- Session management
 local function closeSession(sessionId)
     local session = shellSessions[sessionId]
     if session then
         session.active = false
         shellSessions[sessionId] = nil
-        sendMessage("info", "Session #" .. sessionId .. " closed", sessionId)
-        sendMessage("shell", "Session ended\n", sessionId)
+        sendMessage(SwarmCommon.MESSAGE_TYPES.INFO, "Session #" .. sessionId .. " closed", sessionId)
+        sendMessage(SwarmCommon.MESSAGE_TYPES.SHELL, "Session ended\n", sessionId)
     end
 end
 
 local function listSessions()
     local sessionList = {}
     local count = 0
+    
     for id, session in pairs(shellSessions) do
         count = count + 1
         local status = session.active and "active" or "inactive"
         local dirInfo = session.workingDir and (" @ " .. session.workingDir) or ""
-        table.insert(sessionList, "Session #" .. id .. ": " .. status .. dirInfo)
+        local age = os.epoch("utc") - session.created
+        table.insert(sessionList, string.format("Session #%d: %s%s (age: %.1fs)", 
+                                              id, status, dirInfo, age / 1000))
     end
     
     if count == 0 then
@@ -200,37 +207,233 @@ local function listSessions()
     end
 end
 
--- Program execution
+-- Enhanced program execution using worker library
 local function runProgram(programName, args)
     local programPath = PROGRAMS_DIR .. "/" .. programName
     
     if not fs.exists(programPath) and not fs.exists(programPath .. ".lua") then
-        sendMessage("status", "Program not found: " .. programName, nil, false)
+        sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, "Program not found: " .. programName, nil, false)
         return
     end
     
     print("Executing: " .. programName)
-    sendMessage("status", "Starting: " .. programName, nil, true)
+    sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, "Starting: " .. programName, nil, true)
     
+    -- Set up worker environment
+    SwarmWorker.setStatusCallback(function(msg, success)
+        sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, msg, nil, success)
+    end)
+    
+    -- Set up global sendStatus for backward compatibility
     _G.sendStatus = function(msg, success)
-        sendMessage("status", msg, nil, success)
+        sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, msg, nil, success)
     end
     
-    local success = shell.run(programPath, table.unpack(args or {}))
+    local success, err = SwarmCommon.safeCall(function()
+        shell.run(programPath, table.unpack(args or {}))
+    end)
+    
+    -- Cleanup
     _G.sendStatus = nil
+    SwarmWorker.setStatusCallback(nil)
     
     local result = success and "Completed: " or "Failed: "
-    sendMessage("status", result .. programName, nil, success)
+    local message = result .. programName
+    if not success then
+        message = message .. " (" .. tostring(err) .. ")"
+    end
+    
+    sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, message, nil, success)
 end
 
--- Startup checks
-if not fs.exists(PROGRAMS_DIR) then
-    fs.makeDir(PROGRAMS_DIR)
+-- Enhanced program deployment with chunked transfer
+local function handleProgramDeployment(programName, totalChunks)
+    if not programName or not totalChunks then
+        sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, "Invalid deployment parameters", nil, false)
+        return false
+    end
+    
+    programDeployments[programName] = {
+        chunks = {},
+        totalChunks = totalChunks,
+        receivedChunks = 0,
+        startTime = os.epoch("utc")
+    }
+    
+    print("Receiving program: " .. programName .. " (" .. totalChunks .. " chunks)")
+    sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, "Ready to receive " .. programName, nil, true)
+    return true
 end
 
--- Main command loop
-sendMessage("status", "Worker ready", nil, true)
+local function handleProgramChunk(programName, chunkNum, totalChunks, chunkData)
+    if not programDeployments[programName] then
+        programDeployments[programName] = {
+            chunks = {},
+            totalChunks = totalChunks,
+            receivedChunks = 0,
+            startTime = os.epoch("utc")
+        }
+    end
+    
+    local deployment = programDeployments[programName]
+    deployment.chunks[chunkNum] = chunkData
+    deployment.receivedChunks = deployment.receivedChunks + 1
+    
+    print("Chunk " .. chunkNum .. "/" .. totalChunks .. " received")
+    
+    -- Check if all chunks received
+    if deployment.receivedChunks == deployment.totalChunks then
+        print("All chunks received, assembling program...")
+        
+        -- Assemble chunks in order
+        local chunks = {}
+        for i = 1, deployment.totalChunks do
+            if deployment.chunks[i] then
+                table.insert(chunks, deployment.chunks[i])
+            else
+                sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                           "Missing chunk " .. i .. " for " .. programName, nil, false)
+                programDeployments[programName] = nil
+                return false
+            end
+        end
+        
+        local content = SwarmCommon.assembleChunks(chunks)
+        
+        -- Write to programs directory
+        SwarmCommon.ensureDirectory(PROGRAMS_DIR)
+        local programPath = PROGRAMS_DIR .. "/" .. programName
+        if not programPath:match("%.lua$") then
+            programPath = programPath .. ".lua"
+        end
+        
+        local success, err = SwarmCommon.writeFile(programPath, content)
+        if success then
+            local duration = (os.epoch("utc") - deployment.startTime) / 1000
+            sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                       string.format("Program deployed: %s (%d bytes, %.1fs)", 
+                                   programName, #content, duration), nil, true)
+            print("Program saved: " .. programPath)
+        else
+            sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                       "Failed to write " .. programName .. ": " .. err, nil, false)
+        end
+        
+        -- Clean up deployment tracking
+        programDeployments[programName] = nil
+        return success
+    end
+    
+    return true
+end
 
+-- Command handlers table for better organization
+local commandHandlers = {
+    ping = function(args, targetId)
+        print("Command: ping")
+        sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, "Pong from turtle #" .. turtleID, nil, true)
+    end,
+    
+    status = function(args, targetId)
+        print("Command: status")
+        local fuel = turtle.getFuelLevel()
+        local position = SwarmCommon.getCurrentPosition()
+        local posStr = SwarmCommon.formatPosition(position)
+        sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                   "Fuel: " .. tostring(fuel) .. " | Pos: " .. posStr, nil, true)
+    end,
+    
+    reboot = function(args, targetId)
+        print("Command: reboot")
+        sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, "Rebooting...", nil, true)
+        os.sleep(0.5)
+        os.reboot()
+    end,
+    
+    getVersion = function(args, targetId)
+        print("Command: getVersion")
+        sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, "Version: " .. WORKER_VERSION, nil, true)
+    end,
+    
+    createShell = function(args, targetId)
+        print("Command: createShell")
+        sessionCounter = sessionCounter + 1
+        createSession(sessionCounter)
+    end,
+    
+    shellInput = function(args, targetId)
+        print("Command: shellInput")
+        local sessionId, input = tonumber(args[1]), args[2]
+        if sessionId and input then
+            executeShellCommand(sessionId, input)
+        else
+            sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, "Invalid shell input", nil, false)
+        end
+    end,
+    
+    closeShell = function(args, targetId)
+        print("Command: closeShell")
+        local sessionId = tonumber(args[1])
+        if sessionId then
+            closeSession(sessionId)
+        end
+    end,
+    
+    listSessions = function(args, targetId)
+        print("Command: listSessions")
+        local sessionInfo = listSessions()
+        sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, sessionInfo, nil, true)
+    end,
+    
+    switchTab = function(args, targetId)
+        print("Command: switchTab")
+        local sessionId = tonumber(args[1])
+        local session = shellSessions[sessionId]
+        if session and session.active then
+            sendMessage(SwarmCommon.MESSAGE_TYPES.INFO, 
+                       "Switched to session #" .. sessionId .. " (remote only)", sessionId)
+        else
+            sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, "Session not found or inactive", nil, false)
+        end
+    end,
+    
+    startShell = function(args, targetId)
+        print("Command: startShell")
+        sessionCounter = sessionCounter + 1
+        createSession(sessionCounter)
+    end,
+    
+    shell = function(args, targetId)
+        print("Command: shell")
+        local cmdString = table.concat(args, " ")
+        print("Shell: " .. cmdString)
+        local success = shell.run(cmdString)
+        sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                   "Shell command " .. (success and "succeeded" or "failed"), nil, success)
+    end,
+    
+    deployProgram = function(args, targetId)
+        print("Command: deployProgram")
+        local programName = args[1]
+        local totalChunks = tonumber(args[2])
+        handleProgramDeployment(programName, totalChunks)
+    end,
+    
+    programChunk = function(args, targetId)
+        print("Command: programChunk")
+        local programName = args[1]
+        local chunkNum = tonumber(args[2])
+        local totalChunks = tonumber(args[3])
+        local chunkData = args[4]
+        handleProgramChunk(programName, chunkNum, totalChunks, chunkData)
+    end
+}
+
+-- Initialize worker environment
+SwarmCommon.ensureDirectory(PROGRAMS_DIR)
+sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, "Worker ready", nil, true)
+
+-- Main command processing loop
 while true do
     local event, side, channel, replyChannel, message, distance = os.pullEvent("modem_message")
     
@@ -240,155 +443,20 @@ while true do
         
         if not command then
             print("Warning: Received message without command field")
-            -- Skip processing if no command
-        elseif command == "ping" then
-            print("Command: " .. command)
-            sendMessage("status", "Pong from turtle #" .. turtleID, nil, true)
-            
-        elseif command == "status" then
-            print("Command: " .. command)
-            local fuel = turtle.getFuelLevel()
-            local x, y, z = gps.locate(5, false)
-            local position = x and string.format("X:%d Y:%d Z:%d", x, y, z) or "Unknown"
-            sendMessage("status", "Fuel: " .. tostring(fuel) .. " | Pos: " .. position, nil, true)
-            
-        elseif command == "reboot" then
-            print("Command: " .. command)
-            sendMessage("status", "Rebooting...", nil, true)
-            os.sleep(0.5)
-            os.reboot()
-            
-        elseif command == "getVersion" then
-            print("Command: " .. command)
-            sendMessage("status", "Version: " .. WORKER_VERSION, nil, true)
-            
-        elseif command == "createShell" then
-            print("Command: " .. command)
-            sessionCounter = sessionCounter + 1
-            createSession(sessionCounter)
-            
-        elseif command == "shellInput" then
-            print("Command: " .. command)
-            local sessionId, input = tonumber(args[1]), args[2]
-            if sessionId and input then
-                executeShellCommand(sessionId, input)
-            else
-                sendMessage("status", "Invalid shell input", nil, false)
-            end
-            
-        elseif command == "closeShell" then
-            print("Command: " .. command)
-            local sessionId = tonumber(args[1])
-            if sessionId then
-                closeSession(sessionId)
-            end
-            
-        elseif command == "listSessions" then
-            print("Command: " .. command)
-            local sessionInfo = listSessions()
-            sendMessage("status", sessionInfo, nil, true)
-            
-        elseif command == "switchTab" then
-            print("Command: " .. command)
-            local sessionId = tonumber(args[1])
-            local session = shellSessions[sessionId]
-            if session and session.active then
-                sendMessage("info", "Switched to session #" .. sessionId .. " (remote only)", sessionId)
-            else
-                sendMessage("status", "Session not found or inactive", nil, false)
-            end
-            
-        elseif command == "startShell" then
-            print("Command: " .. command)
-            sessionCounter = sessionCounter + 1
-            createSession(sessionCounter)
-            
-        elseif command == "shell" then
-            print("Command: " .. command)
-            local cmdString = table.concat(args, " ")
-            print("Shell: " .. cmdString)
-            local success = shell.run(cmdString)
-            sendMessage("status", "Shell command " .. (success and "succeeded" or "failed"), nil, success)
-            
-        elseif command == "deployProgram" then
-            print("Command: " .. command)
-            local programName = args[1]
-            local totalChunks = tonumber(args[2])
-            
-            if not programName or not totalChunks then
-                sendMessage("status", "Invalid deployment parameters", nil, false)
-            else
-                programDeployments[programName] = {
-                    chunks = {},
-                    totalChunks = totalChunks,
-                    receivedChunks = 0
-                }
-                print("Receiving program: " .. programName .. " (" .. totalChunks .. " chunks)")
-                sendMessage("status", "Ready to receive " .. programName, nil, true)
-            end
-            
-        elseif command == "programChunk" then
-            print("Command: " .. command)
-            local programName = args[1]
-            local chunkNum = tonumber(args[2])
-            local totalChunks = tonumber(args[3])
-            local chunkData = args[4]
-            
-            if not programDeployments[programName] then
-                programDeployments[programName] = {
-                    chunks = {},
-                    totalChunks = totalChunks,
-                    receivedChunks = 0
-                }
-            end
-            
-            local deployment = programDeployments[programName]
-            deployment.chunks[chunkNum] = chunkData
-            deployment.receivedChunks = deployment.receivedChunks + 1
-            
-            print("Chunk " .. chunkNum .. "/" .. totalChunks .. " received")
-            
-            -- Check if all chunks received
-            if deployment.receivedChunks == deployment.totalChunks then
-                print("All chunks received, assembling program...")
-                
-                -- Assemble chunks in order
-                local fullContent = {}
-                for i = 1, deployment.totalChunks do
-                    if deployment.chunks[i] then
-                        table.insert(fullContent, deployment.chunks[i])
-                    else
-                        sendMessage("status", "Missing chunk " .. i .. " for " .. programName, nil, false)
-                        programDeployments[programName] = nil
-                        return
-                    end
-                end
-                
-                local content = table.concat(fullContent)
-                
-                -- Write to programs directory
-                local programPath = PROGRAMS_DIR .. "/" .. programName
-                if not programPath:match("%.lua$") then
-                    programPath = programPath .. ".lua"
-                end
-                
-                local file = fs.open(programPath, "w")
-                if file then
-                    file.write(content)
-                    file.close()
-                    sendMessage("status", "Program deployed: " .. programName .. " (" .. #content .. " bytes)", nil, true)
-                    print("Program saved: " .. programPath)
-                else
-                    sendMessage("status", "Failed to write " .. programName, nil, false)
-                end
-                
-                -- Clean up deployment tracking
-                programDeployments[programName] = nil
-            end
-            
         else
-            print("Command: " .. command)
-            runProgram(command, args)
+            local handler = commandHandlers[command]
+            if handler then
+                local success, err = SwarmCommon.safeCall(handler, args, message.targetId)
+                if not success then
+                    print("Error handling command '" .. command .. "': " .. tostring(err))
+                    sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                               "Command error: " .. tostring(err), nil, false)
+                end
+            else
+                -- Treat as program execution
+                print("Command: " .. command)
+                runProgram(command, args)
+            end
         end
     end
 end

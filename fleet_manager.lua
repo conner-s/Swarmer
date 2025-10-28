@@ -1,96 +1,69 @@
--- Fleet Management Tool v1.0
+-- Fleet Management Tool v3.0
 -- Bulk operations and health monitoring for worker turtles
--- Run this alongside puppetmaster for advanced fleet management
+-- Refactored to use common libraries
 
-local COMMAND_CHANNEL = 100
-local REPLY_CHANNEL = 101
+local SwarmCommon = require("lib.swarm_common")
+local SwarmUI = require("lib.swarm_ui")
+
+-- Configuration
 local FLEET_TIMEOUT = 5
+local HEALTH_CHECK_INTERVAL = 10
+local OFFLINE_THRESHOLD = 30 -- seconds
 
-local modem = peripheral.find("modem")
+-- Initialize components
+local modem, err = SwarmCommon.initModem()
 if not modem then
-    print("ERROR: No modem found!")
+    print("ERROR: " .. err)
     return
 end
 
-modem.open(REPLY_CHANNEL)
+SwarmCommon.openChannels(modem, {SwarmCommon.REPLY_CHANNEL})
 
-print("=== Fleet Management Tool v1.0 ===")
+print("=== Fleet Management Tool v3.0 ===")
 print("Advanced bulk operations for worker turtles")
 print("")
 
 local fleetData = {}
 
--- Fleet discovery and health monitoring
+-- Fleet discovery and management
 local function discoverFleet()
     print("Discovering fleet...")
     fleetData = {}
     
-    -- Send ping to all turtles
-    modem.transmit(COMMAND_CHANNEL, REPLY_CHANNEL, {
-        command = "ping",
-        timestamp = os.epoch("utc")
-    })
+    local turtles = SwarmCommon.discoverTurtles(modem, FLEET_TIMEOUT)
     
-    -- Collect responses
-    local timer = os.startTimer(FLEET_TIMEOUT)
-    local responses = 0
-    
-    while true do
-        local event, p1, p2, p3, p4 = os.pullEvent()
-        
-        if event == "timer" and p1 == timer then
-            break
-        elseif event == "modem_message" then
-            local message = p4
-            if type(message) == "table" and message.id and message.message then
-                if not fleetData[message.id] then
-                    fleetData[message.id] = {
-                        id = message.id,
-                        lastSeen = os.epoch("utc"),
-                        status = "online",
-                        version = "unknown"
-                    }
-                    responses = responses + 1
-                    print("Found turtle #" .. message.id)
-                end
-            end
-        end
+    for id, turtle in pairs(turtles) do
+        fleetData[id] = {
+            id = id,
+            lastSeen = turtle.lastSeen,
+            status = "online",
+            version = turtle.version or "unknown"
+        }
+        print("Found turtle #" .. id .. " (v" .. fleetData[id].version .. ")")
     end
     
-    print("Discovery complete: " .. responses .. " turtles found")
-    return responses
+    local count = 0
+    for _ in pairs(fleetData) do count = count + 1 end
+    print("Discovery complete: " .. count .. " turtles found")
+    return count
 end
 
 local function getFleetStatus()
     print("Gathering fleet status...")
     
-    -- Send status request to all known turtles
-    modem.transmit(COMMAND_CHANNEL, REPLY_CHANNEL, {
-        command = "status",
-        timestamp = os.epoch("utc")
-    })
+    SwarmCommon.sendCommand(modem, "status")
     
-    -- Collect detailed status
-    local timer = os.startTimer(FLEET_TIMEOUT)
-    local statusReceived = 0
-    
-    while true do
-        local event, p1, p2, p3, p4 = os.pullEvent()
-        
-        if event == "timer" and p1 == timer then
-            break
-        elseif event == "modem_message" then
-            local message = p4
-            if type(message) == "table" and message.id and fleetData[message.id] then
-                fleetData[message.id].lastSeen = os.epoch("utc")
-                fleetData[message.id].status = message.success and "online" or "error"
-                fleetData[message.id].statusMessage = message.message
-                statusReceived = statusReceived + 1
-            end
+    local replies = SwarmCommon.collectReplies(FLEET_TIMEOUT, function(message)
+        if fleetData[message.id] then
+            fleetData[message.id].lastSeen = message.timestamp
+            fleetData[message.id].status = message.success and "online" or "error"
+            fleetData[message.id].statusMessage = message.message
+            fleetData[message.id].version = message.version
         end
-    end
+        return true
+    end)
     
-    return statusReceived
+    return #replies
 end
 
 local function showFleetReport()
@@ -100,18 +73,37 @@ local function showFleetReport()
     
     local totalTurtles = 0
     local onlineTurtles = 0
+    local now = os.epoch("utc")
     
+    local sortedTurtles = {}
     for id, turtle in pairs(fleetData) do
+        table.insert(sortedTurtles, {id = id, turtle = turtle})
+    end
+    
+    table.sort(sortedTurtles, function(a, b) return a.id < b.id end)
+    
+    for _, entry in ipairs(sortedTurtles) do
+        local id = entry.id
+        local turtle = entry.turtle
         totalTurtles = totalTurtles + 1
-        if turtle.status == "online" then
+        
+        -- Check if turtle is still online
+        local timeSinceLastSeen = (now - turtle.lastSeen) / 1000
+        if timeSinceLastSeen < OFFLINE_THRESHOLD then
             onlineTurtles = onlineTurtles + 1
+            turtle.status = "online"
+        else
+            turtle.status = "offline"
         end
         
-        local lastSeenStr = os.date("%H:%M:%S", turtle.lastSeen / 1000)
+        local lastSeenStr = SwarmCommon.formatTimestamp(turtle.lastSeen)
         local details = turtle.statusMessage or "No details"
         
-        print(string.format("%-4d %-8s %-12s %-40s", 
-            id, turtle.status, lastSeenStr, details:sub(1, 40)))
+        -- Color coding based on status
+        local statusColor = turtle.status == "online" and "✓" or "✗"
+        
+        print(string.format("%s %-3d %-8s %-12s %-40s", 
+            statusColor, id, turtle.status, lastSeenStr, details:sub(1, 40)))
     end
     
     print(string.rep("-", 70))
@@ -120,85 +112,69 @@ local function showFleetReport()
 end
 
 local function bulkCommand()
-    write("Command to send to all turtles: ")
-    local command = read()
+    local command = SwarmUI.promptChoice("Command to send to all turtles", {"ping", "status", "reboot", "custom"})
     
-    if not command or command == "" then
-        print("No command entered")
-        return
-    end
-    
-    write("Arguments (optional): ")
-    local argString = read()
-    local args = {}
-    
-    if argString and argString ~= "" then
-        for arg in argString:gmatch("%S+") do
-            table.insert(args, arg)
+    if command == "custom" then
+        write("Custom command: ")
+        command = read()
+        if not command or command == "" then
+            SwarmUI.showStatus("No command entered", "error")
+            return
         end
     end
     
-    local fleetCount = 0
-    for _ in pairs(fleetData) do
-        fleetCount = fleetCount + 1
-    end
-    
-    print("Sending '" .. command .. "' to " .. fleetCount .. " turtles...")
-    
-    modem.transmit(COMMAND_CHANNEL, REPLY_CHANNEL, {
-        command = command,
-        args = args,
-        timestamp = os.epoch("utc")
-    })
-    
-    -- Wait for responses
-    local timer = os.startTimer(FLEET_TIMEOUT)
-    local responses = 0
-    
-    while true do
-        local event, p1, p2, p3, p4 = os.pullEvent()
-        
-        if event == "timer" and p1 == timer then
-            break
-        elseif event == "modem_message" then
-            local message = p4
-            if type(message) == "table" and message.id then
-                responses = responses + 1
-                local status = message.success and "✓" or "✗"
-                print(status .. " Turtle #" .. message.id .. ": " .. (message.message or "No response"))
+    local args = {}
+    if command == "custom" then
+        write("Arguments (space-separated, optional): ")
+        local argString = read()
+        if argString and argString ~= "" then
+            for arg in argString:gmatch("%S+") do
+                table.insert(args, arg)
             end
         end
     end
     
     local fleetCount = 0
-    for _ in pairs(fleetData) do
-        fleetCount = fleetCount + 1
+    for _ in pairs(fleetData) do fleetCount = fleetCount + 1 end
+    
+    if not SwarmUI.confirm("Send '" .. command .. "' to " .. fleetCount .. " turtles?") then
+        print("Command cancelled")
+        return
     end
     
-    print("Command completed: " .. responses .. "/" .. fleetCount .. " responses")
+    print("Sending command...")
+    SwarmCommon.sendCommand(modem, command, args)
+    
+    -- Collect responses
+    local responses = SwarmCommon.collectReplies(FLEET_TIMEOUT)
+    
+    print("\n=== Command Results ===")
+    for _, response in ipairs(responses) do
+        local status = response.success and "✓" or "✗"
+        print(status .. " Turtle #" .. response.id .. ": " .. (response.message or "No response"))
+    end
+    
+    print("Command completed: " .. #responses .. "/" .. fleetCount .. " responses")
 end
 
 local function targetedCommand()
-    write("Target turtle ID: ")
-    local targetId = tonumber(read())
+    local targetId = SwarmUI.promptNumber("Target turtle ID: ", 1)
     
-    if not targetId or not fleetData[targetId] then
-        print("Invalid turtle ID or turtle not in fleet")
+    if not fleetData[targetId] then
+        SwarmUI.showStatus("Turtle #" .. targetId .. " not in fleet", "error")
         return
     end
     
     write("Command: ")
     local command = read()
-    
     if not command or command == "" then
-        print("No command entered")
+        SwarmUI.showStatus("No command entered", "error")
         return
     end
     
-    write("Arguments (optional): ")
-    local argString = read()
     local args = {}
-    
+    write("Arguments (space-separated, optional): ")
+    local argString = read()
     if argString and argString ~= "" then
         for arg in argString:gmatch("%S+") do
             table.insert(args, arg)
@@ -206,91 +182,91 @@ local function targetedCommand()
     end
     
     print("Sending '" .. command .. "' to turtle #" .. targetId .. "...")
+    SwarmCommon.sendCommand(modem, command, args, targetId)
     
-    modem.transmit(COMMAND_CHANNEL, REPLY_CHANNEL, {
-        command = command,
-        args = args,
-        targetId = targetId,
-        timestamp = os.epoch("utc")
-    })
+    -- Wait for specific response
+    local replies = SwarmCommon.collectReplies(3, function(message)
+        return message.id == targetId
+    end)
     
-    -- Wait for response
-    local timer = os.startTimer(3)
-    
-    while true do
-        local event, p1, p2, p3, p4 = os.pullEvent()
-        
-        if event == "timer" and p1 == timer then
-            print("No response from turtle #" .. targetId)
-            break
-        elseif event == "modem_message" then
-            local message = p4
-            if type(message) == "table" and message.id == targetId then
-                local status = message.success and "✓" or "✗"
-                print(status .. " Response: " .. (message.message or "No message"))
-                break
-            end
-        end
+    if #replies > 0 then
+        local response = replies[1]
+        local status = response.success and "✓" or "✗"
+        print(status .. " Response: " .. (response.message or "No message"))
+    else
+        SwarmUI.showStatus("No response from turtle #" .. targetId, "warning")
     end
 end
 
 local function emergencyRecovery()
-    print("=== Emergency Recovery Mode ===")
+    print("\n=== Emergency Recovery Mode ===")
     print("This will attempt to recover unresponsive turtles")
+    print("Actions:")
+    print("1. Broadcast emergency reboot")
+    print("2. Wait for systems to restart")
+    print("3. Re-discover fleet")
     print("")
-    write("Proceed? (y/n): ")
-    local confirm = read()
     
-    if not (confirm == "y" or confirm == "Y") then
+    if not SwarmUI.confirm("Proceed with recovery?") then
         print("Recovery cancelled")
         return
     end
     
-    print("Step 1: Broadcasting emergency reboot...")
-    modem.transmit(COMMAND_CHANNEL, REPLY_CHANNEL, {
-        command = "reboot",
-        timestamp = os.epoch("utc")
-    })
+    SwarmUI.showStatus("Broadcasting emergency reboot...", "info")
+    SwarmCommon.sendCommand(modem, "reboot")
     
+    print("Waiting for turtles to restart...")
+    SwarmUI.showProgress(0, 3, "Waiting")
     os.sleep(2)
+    SwarmUI.showProgress(1, 3, "Waiting")
+    os.sleep(2)
+    SwarmUI.showProgress(2, 3, "Waiting")
+    os.sleep(1)
+    SwarmUI.showProgress(3, 3, "Waiting")
+    print("")
     
-    print("Step 2: Waiting for turtles to come back online...")
-    os.sleep(5)
+    SwarmUI.showStatus("Re-discovering fleet...", "info")
+    local found = discoverFleet()
     
-    print("Step 3: Re-discovering fleet...")
-    discoverFleet()
-    
-    print("Recovery complete. Check fleet status for results.")
+    SwarmUI.showStatus("Recovery complete. Found " .. found .. " turtles.", "success")
 end
 
 local function healthMonitor()
-    print("Starting continuous health monitoring...")
+    print("\n=== Continuous Health Monitor ===")
+    print("Monitoring fleet health every " .. HEALTH_CHECK_INTERVAL .. " seconds")
     print("Press any key to stop")
     print("")
     
     local monitoring = true
     
-    -- Start monitoring in background
     local function monitor()
         while monitoring do
-            getFleetStatus()
+            local statusCount = getFleetStatus()
+            local now = os.epoch("utc")
             
             -- Check for issues
-            local issues = 0
+            local issues = {}
             for id, turtle in pairs(fleetData) do
-                local timeSinceLastSeen = (os.epoch("utc") - turtle.lastSeen) / 1000
-                if timeSinceLastSeen > 30 then -- 30 seconds threshold
-                    print("WARNING: Turtle #" .. id .. " not responding for " .. 
-                          math.floor(timeSinceLastSeen) .. " seconds")
-                    issues = issues + 1
+                local timeSinceLastSeen = (now - turtle.lastSeen) / 1000
+                if timeSinceLastSeen > OFFLINE_THRESHOLD then
+                    table.insert(issues, {
+                        id = id,
+                        offline_time = timeSinceLastSeen
+                    })
                 end
             end
             
-            if issues == 0 then
-                print("All turtles healthy (" .. os.date("%H:%M:%S") .. ")")
+            if #issues == 0 then
+                SwarmUI.showStatus("All " .. statusCount .. " turtles healthy (" .. 
+                                 SwarmCommon.formatTimestamp() .. ")", "success")
+            else
+                for _, issue in ipairs(issues) do
+                    SwarmUI.showStatus("Turtle #" .. issue.id .. " offline for " .. 
+                                     math.floor(issue.offline_time) .. " seconds", "warning")
+                end
             end
             
-            os.sleep(10) -- Check every 10 seconds
+            os.sleep(HEALTH_CHECK_INTERVAL)
         end
     end
     
@@ -300,80 +276,60 @@ local function healthMonitor()
     end
     
     parallel.waitForAny(monitor, waitForStop)
-    print("Health monitoring stopped")
-end
-
-local function showMenu()
-    print("\n=== Fleet Management Menu ===")
-    print("1. Discover fleet")
-    print("2. Fleet status report") 
-    print("3. Bulk command")
-    print("4. Targeted command")
-    print("5. Health monitor")
-    print("6. Emergency recovery")
-    print("7. Export fleet data")
-    print("0. Exit")
-    print("=============================")
-    write("Choice: ")
+    SwarmUI.showStatus("Health monitoring stopped", "info")
 end
 
 local function exportFleetData()
     local filename = "fleet_" .. os.date("%Y%m%d_%H%M%S") .. ".txt"
-    local file = fs.open(filename, "w")
     
-    if file then
-        file.writeLine("Fleet Status Export - " .. os.date())
-        file.writeLine("Generated by Fleet Management Tool v1.0")
-        file.writeLine(string.rep("=", 50))
-        file.writeLine("")
-        
-        for id, turtle in pairs(fleetData) do
-            file.writeLine("Turtle #" .. id)
-            file.writeLine("  Status: " .. turtle.status)
-            file.writeLine("  Last Seen: " .. os.date("%c", turtle.lastSeen / 1000))
-            file.writeLine("  Details: " .. (turtle.statusMessage or "No details"))
-            file.writeLine("")
-        end
-        
-        file.close()
-        print("Fleet data exported to: " .. filename)
+    local exportData = {
+        "Fleet Status Export - " .. os.date(),
+        "Generated by Fleet Management Tool v3.0",
+        string.rep("=", 50),
+        ""
+    }
+    
+    for id, turtle in pairs(fleetData) do
+        table.insert(exportData, "Turtle #" .. id)
+        table.insert(exportData, "  Status: " .. turtle.status)
+        table.insert(exportData, "  Version: " .. (turtle.version or "unknown"))
+        table.insert(exportData, "  Last Seen: " .. SwarmCommon.formatTimestamp(turtle.lastSeen))
+        table.insert(exportData, "  Details: " .. (turtle.statusMessage or "No details"))
+        table.insert(exportData, "")
+    end
+    
+    local success, err = SwarmCommon.writeFile(filename, table.concat(exportData, "\n"))
+    if success then
+        SwarmUI.showStatus("Fleet data exported to: " .. filename, "success")
     else
-        print("Failed to create export file")
+        SwarmUI.showStatus("Failed to create export file: " .. err, "error")
     end
 end
 
--- Main program loop
-local function main()
-    while true do
-        showMenu()
-        local choice = read()
-        
-        if choice == "0" then
-            print("Exiting fleet management...")
-            break
-        elseif choice == "1" then
-            discoverFleet()
-        elseif choice == "2" then
-            getFleetStatus()
-            showFleetReport()
-        elseif choice == "3" then
-            bulkCommand()
-        elseif choice == "4" then
-            targetedCommand()
-        elseif choice == "5" then
-            healthMonitor()
-        elseif choice == "6" then
-            emergencyRecovery()
-        elseif choice == "7" then
-            exportFleetData()
-        else
-            print("Invalid choice")
-        end
-    end
+-- Create main menu
+local function createMainMenu()
+    local menu = SwarmUI.Menu.new("Fleet Management v3.0")
+    
+    menu:addOption("1", "Discover fleet", discoverFleet)
+    menu:addOption("2", "Fleet status report", function()
+        getFleetStatus()
+        showFleetReport()
+    end)
+    menu:addOption("3", "Bulk command", bulkCommand)
+    menu:addOption("4", "Targeted command", targetedCommand)
+    menu:addOption("5", "Health monitor", healthMonitor)
+    menu:addOption("6", "Emergency recovery", emergencyRecovery)
+    menu:addOption("7", "Export fleet data", exportFleetData)
+    menu:addOption("0", "Exit", function() return false end)
+    
+    return menu
 end
 
--- Auto-discover on startup
-print("Auto-discovering fleet...")
+-- Initialize and run
+SwarmUI.showStatus("Auto-discovering fleet...", "info")
 discoverFleet()
 
-main()
+local mainMenu = createMainMenu()
+mainMenu:run()
+
+print("Exiting fleet management...")
