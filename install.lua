@@ -22,6 +22,7 @@ local WORKER_VERSION = "2.2"
 local turtleID = os.getComputerID()
 local shellSessions = {}
 local sessionCounter = 0
+local programDeployments = {} -- Track incoming program deployments
 
 -- Setup modem with error handling
 local modem = peripheral.find("modem")
@@ -307,6 +308,80 @@ while true do
             print("Shell: " .. cmdString)
             local success = shell.run(cmdString)
             sendMessage("status", "Shell command " .. (success and "succeeded" or "failed"), nil, success)
+            
+        elseif command == "deployProgram" then
+            local programName = args[1]
+            local totalChunks = tonumber(args[2])
+            
+            if not programName or not totalChunks then
+                sendMessage("status", "Invalid deployment parameters", nil, false)
+            else
+                programDeployments[programName] = {
+                    chunks = {},
+                    totalChunks = totalChunks,
+                    receivedChunks = 0
+                }
+                print("Receiving program: " .. programName .. " (" .. totalChunks .. " chunks)")
+                sendMessage("status", "Ready to receive " .. programName, nil, true)
+            end
+            
+        elseif command == "programChunk" then
+            local programName = args[1]
+            local chunkNum = tonumber(args[2])
+            local totalChunks = tonumber(args[3])
+            local chunkData = args[4]
+            
+            if not programDeployments[programName] then
+                programDeployments[programName] = {
+                    chunks = {},
+                    totalChunks = totalChunks,
+                    receivedChunks = 0
+                }
+            end
+            
+            local deployment = programDeployments[programName]
+            deployment.chunks[chunkNum] = chunkData
+            deployment.receivedChunks = deployment.receivedChunks + 1
+            
+            print("Chunk " .. chunkNum .. "/" .. totalChunks .. " received")
+            
+            -- Check if all chunks received
+            if deployment.receivedChunks == deployment.totalChunks then
+                print("All chunks received, assembling program...")
+                
+                -- Assemble chunks in order
+                local fullContent = {}
+                for i = 1, deployment.totalChunks do
+                    if deployment.chunks[i] then
+                        table.insert(fullContent, deployment.chunks[i])
+                    else
+                        sendMessage("status", "Missing chunk " .. i .. " for " .. programName, nil, false)
+                        programDeployments[programName] = nil
+                        return
+                    end
+                end
+                
+                local content = table.concat(fullContent)
+                
+                -- Write to programs directory
+                local programPath = PROGRAMS_DIR .. "/" .. programName
+                if not programPath:match("%.lua$") then
+                    programPath = programPath .. ".lua"
+                end
+                
+                local file = fs.open(programPath, "w")
+                if file then
+                    file.write(content)
+                    file.close()
+                    sendMessage("status", "Program deployed: " .. programName .. " (" .. #content .. " bytes)", nil, true)
+                    print("Program saved: " .. programPath)
+                else
+                    sendMessage("status", "Failed to write " .. programName, nil, false)
+                end
+                
+                -- Clean up deployment tracking
+                programDeployments[programName] = nil
+            end
             
         else
             runProgram(command, args)
