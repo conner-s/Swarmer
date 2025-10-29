@@ -127,7 +127,10 @@ while true do
                             print("  Progress: " .. receivingFile.receivedChunks .. "/" .. receivingFile.totalChunks)
                         end
                         
-                        sendReply("chunkReceived", "Chunk " .. chunkNum .. " received", true)
+                        -- Send ack every 5 chunks or on completion to reduce network traffic
+                        if receivingFile.receivedChunks % 5 == 0 or receivingFile.receivedChunks == receivingFile.totalChunks then
+                            sendReply("chunkReceived", "Chunk " .. chunkNum .. " received", true)
+                        end
                         
                         -- Check if complete
                         if receivingFile.receivedChunks == receivingFile.totalChunks then
@@ -146,17 +149,22 @@ while true do
                             
                             if receivingFile then
                                 -- Save file
-                                local success, err = saveFile(receivingFile.name, content)
+                                local fileName = receivingFile.name
+                                local success, err = saveFile(fileName, content)
+                                
+                                -- Clear state before sending reply
+                                receivingFile = nil
+                                fileChunks = {}
+                                
                                 if success then
-                                    print("[OK] Saved: " .. receivingFile.name)
-                                    sendReply("fileComplete", receivingFile.name .. " saved successfully", true)
+                                    print("[OK] Saved: " .. fileName)
+                                    -- Small delay to ensure file is written
+                                    sleep(0.1)
+                                    sendReply("fileComplete", fileName .. " saved successfully", true)
                                 else
                                     print("[X] Failed: " .. err)
                                     sendReply("error", "Failed to save: " .. err, false)
                                 end
-                                
-                                receivingFile = nil
-                                fileChunks = {}
                             end
                         end
                     end

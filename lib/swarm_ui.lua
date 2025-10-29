@@ -78,7 +78,7 @@ function SwarmUI.TabManager:createTab(title, program, args)
     
     -- Empty table lets multishell create a proper shell environment
     -- This gives the new tab access to shell, require, fs, etc.
-    local tabId = multishell.launch({}, program, table.unpack(args or {}))
+    local tabId = multishell.launch(_ENV, program, table.unpack(args or {}))
     if tabId then
         multishell.setTitle(tabId, title)
         self.tabs[tabId] = {

@@ -112,9 +112,23 @@ local function sendFile(targetId, filePath)
     })
     
     -- Wait for ready confirmation
-    sleep(0.5)
+    local fileStarted = false
+    local startWaitEnd = os.epoch("utc") + 2000
+    while os.epoch("utc") < startWaitEnd and not fileStarted do
+        local event, side, channel, replyChannel, message = os.pullEvent()
+        if event == "modem_message" and channel == SwarmCommon.REPLY_CHANNEL then
+            if type(message) == "table" and message.id == targetId and message.type == "fileStarted" then
+                fileStarted = true
+            end
+        end
+    end
     
-    -- Send chunks
+    if not fileStarted then
+        print("  [X] Turtle did not acknowledge file start")
+        return false
+    end
+    
+    -- Send all chunks quickly without waiting for individual acks
     for i = 1, totalChunks do
         local startPos = (i - 1) * CHUNK_SIZE + 1
         local endPos = math.min(i * CHUNK_SIZE, fileSize)
@@ -128,28 +142,38 @@ local function sendFile(targetId, filePath)
             timestamp = os.epoch("utc")
         })
         
-        -- Small delay between chunks for reliability
-        sleep(0.1)
+        -- Small delay to prevent overwhelming the network
+        sleep(0.05)
     end
     
-    -- Wait for completion confirmation
+    print("  All chunks sent, waiting for completion...")
+    
+    -- Wait for completion confirmation (longer timeout for reassembly)
     local confirmed = false
-    local endTime = os.epoch("utc") + 5000
+    local endTime = os.epoch("utc") + 10000  -- 10 seconds for large files
     
     while os.epoch("utc") < endTime and not confirmed do
         local event, side, channel, replyChannel, message = os.pullEvent()
         
         if event == "modem_message" and channel == SwarmCommon.REPLY_CHANNEL then
             if type(message) == "table" and message.id == targetId then
+                print("  [DEBUG] Received: " .. tostring(message.type))
                 if message.type == "fileComplete" then
                     print("  [OK] " .. message.message)
                     confirmed = true
                 elseif message.type == "error" then
                     print("  [X] Error: " .. message.message)
                     return false
+                elseif message.type == "chunkReceived" then
+                    -- Progress update from client (every 5 chunks)
+                    print("  [DEBUG] Progress ack received")
                 end
             end
         end
+    end
+    
+    if not confirmed then
+        print("  [X] Timeout waiting for file completion")
     end
     
     return confirmed
@@ -182,6 +206,9 @@ local function provisionTurtle(targetId, fileSet)
     print("=== Provisioning Complete ===")
     print("Success: " .. success .. " files")
     print("Failed: " .. failed .. " files")
+    print("")
+    print("Press any key to continue...")
+    read()
     
     if failed == 0 then
         SwarmUI.showStatus("All files transferred successfully!", "success")

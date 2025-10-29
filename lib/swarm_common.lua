@@ -1,6 +1,6 @@
 -- Swarm Common Library
 -- Shared functionality for all swarm components
--- Version: 3.0
+-- Version: 4.0
 
 local SwarmCommon = {}
 
@@ -41,12 +41,16 @@ end
 function SwarmCommon.createMessage(messageType, content, options)
     options = options or {}
     
+    -- Core message metadata - always included
     local message = {
         id = os.getComputerID(),
         timestamp = os.epoch("utc"),
-        version = options.version or "3.0"
+        version = options.version or "4.0",
+        role = options.role,        -- Role ID (nil if not assigned)
+        roleName = options.roleName -- Human-readable role name (nil if not assigned)
     }
     
+    -- Message type-specific fields
     if messageType == SwarmCommon.MESSAGE_TYPES.STATUS then
         message.message = content
         message.success = options.success
@@ -60,9 +64,11 @@ function SwarmCommon.createMessage(messageType, content, options)
         message.sessionInfo = content
         message.sessionId = options.sessionId
     else
-        -- Custom message type
+        -- Custom message type - merge all options
         for k, v in pairs(options) do
-            message[k] = v
+            if k ~= "version" and k ~= "role" and k ~= "roleName" then
+                message[k] = v
+            end
         end
     end
     
