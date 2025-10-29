@@ -271,6 +271,45 @@ function SwarmCommon.installLibraries(sourceFiles, targetDir)
         return false, "Could not create directory: " .. targetDir
     end
     
+    -- Recursive function to copy directory contents
+    local function copyDirectoryRecursive(sourcePath, targetPath)
+        local items = fs.list(sourcePath)
+        local copiedCount = 0
+        
+        for _, item in ipairs(items) do
+            local sourceItem = fs.combine(sourcePath, item)
+            local targetItem = fs.combine(targetPath, item)
+            
+            if fs.isDir(sourceItem) then
+                -- Create subdirectory
+                if not fs.exists(targetItem) then
+                    fs.makeDir(targetItem)
+                    SwarmCommon.logStep("Created directory: " .. targetItem, "ok")
+                end
+                -- Recursively copy subdirectory contents
+                copiedCount = copiedCount + copyDirectoryRecursive(sourceItem, targetItem)
+            elseif item:match("%.lua$") then
+                -- Copy Lua file
+                local content, err = SwarmCommon.readFile(sourceItem)
+                if content then
+                    local success, writeErr = SwarmCommon.writeFile(targetItem, content)
+                    if success then
+                        SwarmCommon.logStep("Installed " .. targetItem .. " (" .. #content .. " bytes)", "ok")
+                        copiedCount = copiedCount + 1
+                    else
+                        SwarmCommon.logStep("Failed to write " .. targetItem .. ": " .. tostring(writeErr), "error")
+                        return 0
+                    end
+                else
+                    SwarmCommon.logStep("Failed to read " .. sourceItem .. ": " .. tostring(err), "error")
+                    return 0
+                end
+            end
+        end
+        
+        return copiedCount
+    end
+    
     -- Check if entire lib directory exists on disk and copy it over
     local diskLibPaths = {"disk/lib", "disk0/lib", "disk1/lib"}
     local foundDiskLib = false
@@ -279,30 +318,17 @@ function SwarmCommon.installLibraries(sourceFiles, targetDir)
         if fs.exists(diskLibPath) and fs.isDir(diskLibPath) then
             SwarmCommon.logStep("Found library directory at " .. diskLibPath, "ok")
             
-            -- Copy entire lib directory
-            local libFiles = fs.list(diskLibPath)
-            for _, fileName in ipairs(libFiles) do
-                if fileName:match("%.lua$") then
-                    local sourcePath = fs.combine(diskLibPath, fileName)
-                    local targetPath = fs.combine(targetDir, fileName)
-                    
-                    local content, err = SwarmCommon.readFile(sourcePath)
-                    if content then
-                        local success, writeErr = SwarmCommon.writeFile(targetPath, content)
-                        if success then
-                            SwarmCommon.logStep("Installed " .. targetPath .. " (" .. #content .. " bytes)", "ok")
-                        else
-                            SwarmCommon.logStep("Failed to write " .. targetPath .. ": " .. tostring(writeErr), "error")
-                            return false, "Write failed: " .. targetPath
-                        end
-                    else
-                        SwarmCommon.logStep("Failed to read " .. sourcePath .. ": " .. tostring(err), "error")
-                        return false, "Read failed: " .. sourcePath
-                    end
-                end
+            -- Copy entire lib directory recursively (including subdirectories)
+            local copiedCount = copyDirectoryRecursive(diskLibPath, targetDir)
+            
+            if copiedCount > 0 then
+                SwarmCommon.logStep("Library installation complete: " .. copiedCount .. " files", "ok")
+                foundDiskLib = true
+                break
+            else
+                SwarmCommon.logStep("Failed to copy files from " .. diskLibPath, "error")
+                return false, "Copy failed"
             end
-            foundDiskLib = true
-            break
         end
     end
     
@@ -313,7 +339,8 @@ function SwarmCommon.installLibraries(sourceFiles, targetDir)
         local libraryFiles = {
             "lib/swarm_common.lua",
             "lib/swarm_ui.lua", 
-            "lib/swarm_worker_lib.lua"
+            "lib/swarm_worker_lib.lua",
+            "lib/roles.lua"
         }
         
         for _, libFile in ipairs(libraryFiles) do

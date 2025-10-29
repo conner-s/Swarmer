@@ -1,89 +1,127 @@
 # PowerShell Build Script for Swarm Deployment
 # Flattens swarm directory structure for ComputerCraft import
+# Creates separate server and worker packages to fit on CC disks
 
 param(
-    [string]$DeploymentName = "swarm_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+    [string]$DeploymentName = "swarm_$(Get-Date -Format 'yyyyMMdd_HHmmss')",
+    [ValidateSet("all", "server", "provision", "worker")]
+    [string]$Target = "all"
 )
 
 $ErrorActionPreference = "Stop"
 
 # Paths
 $SwarmRoot = $PSScriptRoot
-$DeploymentDir = Join-Path $SwarmRoot "deployment\$DeploymentName"
-$ManifestFile = Join-Path $DeploymentDir "manifest.txt"
+$DeploymentRoot = Join-Path $SwarmRoot "deployment\$DeploymentName"
 
 Write-Host "=== Swarm v4.0 Build Script ===" -ForegroundColor Cyan
 Write-Host "Deployment Name: $DeploymentName" -ForegroundColor Yellow
+Write-Host "Target: $Target" -ForegroundColor Yellow
 Write-Host ""
 
-# Create deployment directory
-if (Test-Path $DeploymentDir) {
-    Write-Host "Cleaning existing deployment directory..." -ForegroundColor Yellow
-    Remove-Item -Path $DeploymentDir -Recurse -Force
-}
-New-Item -Path $DeploymentDir -ItemType Directory -Force | Out-Null
-
-# Files to include (relative to swarm root)
-$FilesToDeploy = @(
-    # Core programs
+# Define file sets for each deployment type
+$ServerFiles = @(
     "puppetmaster.lua",
-    "worker.lua",
-    "install.lua",
     "monitor.lua",
     "fleet_manager.lua",
+    "lib/swarm_common.lua",
+    "lib/swarm_ui.lua",
+    "lib/roles.lua"
+)
+
+$ProvisionFiles = @(
+    # Server control files
+    "provision_server.lua",
     "distribute.lua",
     
-    # Libraries
+    # Server libraries
     "lib/swarm_common.lua",
-    "lib/swarm_worker_lib.lua",
     "lib/swarm_ui.lua",
     "lib/roles.lua",
     
-    # Role libraries
+    # Worker files (to provision to turtles)
+    "worker.lua",
+    "install.lua",
+    "lib/swarm_worker_lib.lua",
     "lib/roles/miner.lua",
     "lib/roles/courier.lua",
     "lib/roles/builder.lua",
-    
-    # Programs
     "programs/digDown.lua",
     "programs/stairs.lua",
     "programs/hello.lua"
 )
 
-# Create manifest
-$ManifestContent = @()
+$WorkerFiles = @(
+    "provision_client.lua",
+    "worker.lua",
+    "install.lua",
+    "lib/swarm_common.lua",
+    "lib/swarm_worker_lib.lua",
+    "lib/swarm_ui.lua",
+    "lib/roles.lua",
+    "lib/roles/miner.lua",
+    "lib/roles/courier.lua",
+    "lib/roles/builder.lua",
+    "programs/digDown.lua",
+    "programs/stairs.lua",
+    "programs/hello.lua"
+)
 
-Write-Host "Flattening directory structure..." -ForegroundColor Green
-
-foreach ($RelativePath in $FilesToDeploy) {
-    $SourceFile = Join-Path $SwarmRoot $RelativePath
+function Build-Package {
+    param(
+        [string]$PackageName,
+        [string[]]$FilesToDeploy,
+        [string]$Description
+    )
     
-    if (-not (Test-Path $SourceFile)) {
-        Write-Host "  [SKIP] $RelativePath (not found)" -ForegroundColor Yellow
-        continue
+    $DeploymentDir = Join-Path $DeploymentRoot $PackageName
+    $ManifestFile = Join-Path $DeploymentDir "manifest.txt"
+    
+    Write-Host "Building $Description..." -ForegroundColor Green
+    
+    # Create deployment directory
+    if (Test-Path $DeploymentDir) {
+        Remove-Item -Path $DeploymentDir -Recurse -Force
     }
-    
-    # Create flattened filename: replace / and \ with __
-    $FlatName = $RelativePath -replace '[/\\]', '__'
-    $DestFile = Join-Path $DeploymentDir $FlatName
-    
-    # Copy file
-    Copy-Item -Path $SourceFile -Destination $DestFile -Force
-    
-    # Add to manifest: flatname|originalpath
-    $ManifestContent += "$FlatName|$RelativePath"
-    
-    Write-Host "  [OK] $RelativePath -> $FlatName" -ForegroundColor Gray
-}
+    New-Item -Path $DeploymentDir -ItemType Directory -Force | Out-Null
 
-# Save manifest
-$ManifestContent | Set-Content -Path $ManifestFile -Encoding UTF8
+    New-Item -Path $DeploymentDir -ItemType Directory -Force | Out-Null
 
-Write-Host ""
-Write-Host "Creating deployment script..." -ForegroundColor Green
+    # Create manifest
+    $ManifestContent = @()
 
-# Create deploy.lua script
-$DeployScript = @"
+    Write-Host "  Flattening files..." -ForegroundColor Gray
+
+    foreach ($RelativePath in $FilesToDeploy) {
+        $SourceFile = Join-Path $SwarmRoot $RelativePath
+        
+        if (-not (Test-Path $SourceFile)) {
+            Write-Host "    [SKIP] $RelativePath (not found)" -ForegroundColor Yellow
+            continue
+        }
+        
+        # Create flattened filename: replace / and \ with __
+        $FlatName = $RelativePath -replace '[/\\]', '__'
+        $DestFile = Join-Path $DeploymentDir $FlatName
+        
+        # Copy file
+        Copy-Item -Path $SourceFile -Destination $DestFile -Force
+        
+        # Add to manifest: flatname|originalpath
+        $ManifestContent += "$FlatName|$RelativePath"
+        
+        Write-Host "    [OK] $RelativePath -> $FlatName" -ForegroundColor DarkGray
+    }
+
+    # Save manifest
+    $ManifestContent | Set-Content -Path $ManifestFile -Encoding UTF8
+
+    Write-Host "  Creating deployment script..." -ForegroundColor Gray
+
+    Write-Host "  Creating deployment script..." -ForegroundColor Gray
+
+    # Create deploy.lua script
+    $DeployScript = @"
 -- Swarm Deployment Script
 -- Reconstructs directory structure from flattened deployment
 -- Usage: deploy [target_dir]
@@ -95,20 +133,24 @@ print("=== Swarm v4.0 Deployment ===")
 print("Target directory: " .. targetDir)
 print("")
 
+-- Get the directory where this script is running from
+local scriptDir = fs.getDir(shell.getRunningProgram())
+local manifestPath = fs.combine(scriptDir, "manifest.txt")
+
 -- Read manifest
-if not fs.exists("manifest.txt") then
-    error("manifest.txt not found! Run this script in the deployment directory.")
+if not fs.exists(manifestPath) then
+    error("manifest.txt not found in " .. scriptDir .. "! Ensure all deployment files are present.")
 end
 
 local manifest = {}
-local file = fs.open("manifest.txt", "r")
+local file = fs.open(manifestPath, "r")
 if not file then
     error("Could not open manifest.txt")
 end
 
 local line = file.readLine()
 while line do
-    local flatName, originalPath = line:match("^(.+)|(.+)`$")
+    local flatName, originalPath = line:match("^(.+)|(.+)$")
     if flatName and originalPath then
         manifest[flatName] = originalPath
     end
@@ -116,7 +158,13 @@ while line do
 end
 file.close()
 
-print("Loaded manifest with " .. #manifest .. " files")
+-- Count manifest entries
+local manifestCount = 0
+for _ in pairs(manifest) do
+    manifestCount = manifestCount + 1
+end
+
+print("Loaded manifest with " .. manifestCount .. " files")
 print("")
 
 -- Create target directory
@@ -177,62 +225,86 @@ print("3. Run 'puppetmaster.lua' on advanced pocket computer")
 print("4. Run 'monitor.lua' on advanced computer with monitor")
 "@
 
-$DeployScriptPath = Join-Path $DeploymentDir "deploy.lua"
-$DeployScript | Set-Content -Path $DeployScriptPath -Encoding UTF8
+    $DeployScriptPath = Join-Path $DeploymentDir "deploy.lua"
+    $DeployScript | Set-Content -Path $DeployScriptPath -Encoding UTF8
 
-Write-Host "  [OK] Created deploy.lua" -ForegroundColor Gray
+    Write-Host "  Creating README..." -ForegroundColor Gray
 
-# Create README
-$ReadmeContent = @"
-# Swarm Deployment Package: $DeploymentName
-
-This package contains a flattened version of the Swarm v4.0 system for easy import to ComputerCraft.
+    # Create README
+    $ReadmeContent = @"
+# Swarm v4.0 $Description Package
 
 ## Files Included
 
-- $(($ManifestContent | Measure-Object).Count) Lua files from the swarm system
+- $(($ManifestContent | Measure-Object).Count) Lua files
 - manifest.txt - File mapping for reconstruction
 - deploy.lua - Deployment script
 
-## Deployment Instructions
+## Quick Start
 
-### Method 1: Pastebin (Recommended for Small Deployments)
+1. Copy this folder to a ComputerCraft disk
+2. On CC computer: ``cd disk``
+3. Run: ``deploy``
+4. Follow prompts (default target: "swarm")
 
-1. Upload deployment directory to pastebin or file sharing service
-2. On ComputerCraft computer: ``pastebin get <code> deploy.lua``
-3. Run: ``deploy.lua``
-4. Follow prompts
+## What This Package Contains
 
-### Method 2: Disk Transfer (Recommended for Full Deployment)
+$(if ($PackageName -eq "server") {
+@"
+SERVER PACKAGE - For control computers (Puppetmaster/Monitor):
+- puppetmaster.lua - Main control interface (Advanced Pocket Computer)
+- monitor.lua - Fleet monitoring display (Advanced Computer + Monitor)
+- fleet_manager.lua - Fleet management backend
+- Required libraries (swarm_common, swarm_ui, roles)
 
-1. Copy entire deployment directory to a ComputerCraft disk
-2. On ComputerCraft computer: ``cp disk/* .``
-3. Run: ``deploy.lua``
-4. Specify target directory (default: "swarm")
+After deployment:
+- Run ``puppetmaster`` on Advanced Pocket Computer
+- Run ``monitor`` on Advanced Computer with attached monitor
 
-### Method 3: Import via Puppetmaster (Update Existing)
+NOTE: This package does NOT include provision_server. Use 'provision' package for wireless provisioning.
+"@
+} elseif ($PackageName -eq "provision") {
+@"
+PROVISION PACKAGE - For wireless turtle provisioning:
+- provision_server.lua - Wireless file provisioning system
+- distribute.lua - File distribution utility
+- Required libraries (swarm_common, swarm_ui, roles)
 
-1. Drag individual ``__`` files onto running puppetmaster
-2. Manually reconstruct directory structure
-3. Use for updating specific files only
+WORKER FILES INCLUDED (to send to turtles):
+- worker.lua, install.lua
+- All worker libraries (swarm_worker_lib)
+- All role libraries (miner, courier, builder)
+- Sample programs (digDown, stairs, hello)
 
-## What deploy.lua Does
+After deployment:
+- Run ``provision_server`` to wirelessly provision turtles
+- Sends complete worker package without disk space limits!
 
-1. Reads manifest.txt to understand directory structure
-2. Creates target directory (default: "swarm")
-3. Reconstructs all subdirectories (lib, lib/roles, programs)
-4. Copies files to their original locations
-5. Reports deployment status
+USAGE:
+1. Copy provision_client.lua to turtle via disk (tiny file!)
+2. On turtle: provision_client
+3. On this computer: provision_server
+4. Select turtle and file set to provision
+"@
+} else {
+@"
+WORKER PACKAGE - For turtles:
+- provision_client.lua - Wireless provisioning receiver (RECOMMENDED!)
+- worker.lua - Main turtle worker program
+- install.lua - Turtle installation/setup script
+- All role libraries (miner, courier, builder)
+- Worker programs (digDown, stairs, hello)
+- Required libraries (swarm_common, swarm_worker_lib, swarm_ui, roles)
 
-## After Deployment
+After deployment:
+- RECOMMENDED: Run ``provision_client`` then use provision_server from control computer
+- OR manual: Run ``install`` on each turtle to set up
+- Turtles will auto-start on reboot
 
-Navigate to the deployed directory:
-``cd swarm``
-
-Then proceed with normal swarm setup:
-- Turtles: Run ``install.lua``
-- Control: Run ``puppetmaster.lua`` on Advanced Pocket Computer
-- Monitor: Run ``monitor.lua`` on Advanced Computer with attached monitor
+RECOMMENDED: Use provision system to avoid disk space limits!
+Only provision_client.lua needs to fit on disk initially (~7.6KB)
+"@
+})
 
 ## Files Manifest
 
@@ -244,20 +316,47 @@ $(foreach ($line in $ManifestContent) {
 ---
 Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
 Swarm Version: 4.0
+Package: $Description
 "@
 
-$ReadmePath = Join-Path $DeploymentDir "README.txt"
-$ReadmeContent | Set-Content -Path $ReadmePath -Encoding UTF8
+    $ReadmePath = Join-Path $DeploymentDir "README.txt"
+    $ReadmeContent | Set-Content -Path $ReadmePath -Encoding UTF8
 
-Write-Host "  [OK] Created README.txt" -ForegroundColor Gray
+    Write-Host "  [DONE] $Description package complete" -ForegroundColor Green
+    Write-Host "    Location: deployment\$DeploymentName\$PackageName" -ForegroundColor Cyan
+    Write-Host "    Files: $(($ManifestContent | Measure-Object).Count)" -ForegroundColor Cyan
+    Write-Host ""
+    
+    return ($ManifestContent | Measure-Object).Count
+}
 
-Write-Host ""
+# Build requested packages
+$totalFiles = 0
+
+if ($Target -eq "all" -or $Target -eq "server") {
+    $totalFiles += Build-Package -PackageName "server" -FilesToDeploy $ServerFiles -Description "Server Control"
+}
+
+if ($Target -eq "all" -or $Target -eq "provision") {
+    $totalFiles += Build-Package -PackageName "provision" -FilesToDeploy $ProvisionFiles -Description "Provision System"
+}
+
+if ($Target -eq "all" -or $Target -eq "worker") {
+    $totalFiles += Build-Package -PackageName "worker" -FilesToDeploy $WorkerFiles -Description "Worker Turtles"
+}
+
 Write-Host "=== Build Complete ===" -ForegroundColor Green
-Write-Host "Deployment package: deployment\$DeploymentName" -ForegroundColor Cyan
-Write-Host "Files: $(($ManifestContent | Measure-Object).Count)" -ForegroundColor Cyan
+Write-Host "Deployment: deployment\$DeploymentName" -ForegroundColor Cyan
+Write-Host "Total files: $totalFiles" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Next steps:" -ForegroundColor Yellow
-Write-Host "1. Copy deployment\$DeploymentName to ComputerCraft disk" -ForegroundColor White
-Write-Host "2. On CC computer: cd disk/$DeploymentName" -ForegroundColor White
-Write-Host "3. Run: deploy.lua" -ForegroundColor White
+Write-Host "Package Descriptions:" -ForegroundColor Yellow
+Write-Host "  server     - Puppetmaster, monitor, fleet manager (6 files)" -ForegroundColor White
+Write-Host "  provision  - Wireless provisioning with all worker files (15 files)" -ForegroundColor White
+Write-Host "  worker     - Turtle setup with provision_client (13 files)" -ForegroundColor White
+Write-Host ""
+Write-Host "Recommended Workflow:" -ForegroundColor Yellow
+Write-Host "1. Copy 'provision' package to control computer" -ForegroundColor White
+Write-Host "2. Copy ONLY provision_client.lua from 'worker' package to turtle disk" -ForegroundColor White
+Write-Host "3. Run provision_client on turtle, provision_server on control computer" -ForegroundColor White
+Write-Host "4. Wirelessly provision complete worker package" -ForegroundColor White
 Write-Host ""

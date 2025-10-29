@@ -11,8 +11,8 @@ Remote control system for CC:Tweaked turtles with wireless communication.
 - **Group commands**: Send commands to all turtles of a specific role
 - **Specialized libraries**: Each role has dedicated functions for its tasks
 
-**Quick Start**: See [ROLES_GUIDE.md](ROLES_GUIDE.md) for role system overview  
-**Full Docs**: See [README_v4.md](README_v4.md) for complete v4.0 documentation
+**Quick Start**: See [ROLES_GUIDE.md](docs/ROLES_GUIDE.md) for role system overview  
+**Full Docs**: See [README_v4.md](docs/README_v4.md) for complete v4.0 documentation
 
 ### Example: Mining Team
 
@@ -39,7 +39,33 @@ This project has been refactored to use a modular library system:
 
 ## Quick Start
 
-### Build & Deploy (Recommended)
+### Wireless Provisioning (NEW - Recommended!) 📡
+
+**Bypass disk space limits!** Use the wireless provisioning system to send complete file sets to turtles:
+
+```powershell
+# Build deployment packages
+.\build.ps1
+
+# Copy worker/provision_client.lua to disk (tiny file - ~200 lines!)
+# Transfer to turtle, then run:
+provision_client
+
+# On control computer:
+provision_server
+# Choose "Provision turtle" and select file set
+# Files sent wirelessly - no disk space limits!
+```
+
+**Advantages:**
+- ✅ Send complete worker package (13 files, 50KB+) - too large for disk!
+- ✅ No 512KB disk limitation
+- ✅ Fast updates to multiple turtles
+- ✅ Only need tiny provision_client.lua on disk initially
+
+**See [PROVISION_SYSTEM.md](docs/PROVISION_SYSTEM.md) for complete provisioning guide.**
+
+### Build & Deploy (Traditional Method)
 
 Use the automated build system to package and deploy:
 
@@ -52,6 +78,7 @@ Use the automated build system to package and deploy:
 ```
 
 This creates a deployment package in `deployment/production/` that can be:
+
 - Copied to a ComputerCraft disk
 - Uploaded to pastebin
 - Hosted on a web server
@@ -134,5 +161,6 @@ Version 4.0 | Channels: 100 (command), 101 (reply), 102 (viewer)
 - [ROLES_GUIDE.md](docs/ROLES_GUIDE.md) - Quick role system reference
 - [README_v4.md](docs/README_v4.md) - Complete v4.0 documentation
 - [CHANGELOG_v4.md](docs/CHANGELOG_v4.md) - What's new in v4.0
+- [TESTING_CHECKLIST.md](docs/TESTING_CHECKLIST.md) - Comprehensive testing guide
 - [README_DEPLOYMENT.md](docs/README_DEPLOYMENT.md) - Deployment instructions
 - [REFACTORING_SUMMARY.md](docs/REFACTORING_SUMMARY.md) - v3.0 refactoring details

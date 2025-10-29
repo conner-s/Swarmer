@@ -1,8 +1,8 @@
--- Disk-Based Turtle Deployment System v3.0
+-- Disk-Based Turtle Deployment System v4.0
 -- Loads worker and libraries from disk and installs to turtle
--- Updated to deploy new library structure
+-- Updated to deploy new library structure including role system
 
-local WORKER_VERSION = "3.0"
+local WORKER_VERSION = "4.0"
 
 -- Load required common library
 local SwarmCommon = nil
@@ -22,26 +22,39 @@ local function bootstrapLibraryFromDisk()
                 print("[OK] Created lib directory")
             end
             
-            -- Copy all .lua files from disk lib to local lib
-            local libFiles = fs.list(diskLibPath)
-            local copiedFiles = 0
-            
-            for _, fileName in ipairs(libFiles) do
-                if fileName:match("%.lua$") then
-                    local sourcePath = fs.combine(diskLibPath, fileName)
-                    local targetPath = fs.combine("lib", fileName)
+            -- Recursive function to copy directory contents
+            local function copyDirectory(sourcePath, targetPath)
+                local items = fs.list(sourcePath)
+                local copiedCount = 0
+                
+                for _, item in ipairs(items) do
+                    local sourceItem = fs.combine(sourcePath, item)
+                    local targetItem = fs.combine(targetPath, item)
                     
-                    -- Simple file copy using fs.copy
-                    local success, err = pcall(fs.copy, sourcePath, targetPath)
-                    if success then
-                        print("[OK] Copied " .. fileName .. " to lib/")
-                        copiedFiles = copiedFiles + 1
-                    else
-                        print("[ERROR] Failed to copy " .. fileName .. ": " .. tostring(err))
-                        return false
+                    if fs.isDir(sourceItem) then
+                        -- Create subdirectory and copy its contents
+                        if not fs.exists(targetItem) then
+                            fs.makeDir(targetItem)
+                            print("[OK] Created directory: " .. targetItem)
+                        end
+                        copiedCount = copiedCount + copyDirectory(sourceItem, targetItem)
+                    elseif item:match("%.lua$") then
+                        -- Copy Lua file
+                        local success, err = pcall(fs.copy, sourceItem, targetItem)
+                        if success then
+                            print("[OK] Copied " .. item .. " to " .. targetPath .. "/")
+                            copiedCount = copiedCount + 1
+                        else
+                            print("[ERROR] Failed to copy " .. item .. ": " .. tostring(err))
+                        end
                     end
                 end
+                
+                return copiedCount
             end
+            
+            -- Copy all files and subdirectories
+            local copiedFiles = copyDirectory(diskLibPath, "lib")
             
             if copiedFiles > 0 then
                 print("[OK] Bootstrap completed - " .. copiedFiles .. " library files installed")
@@ -73,8 +86,8 @@ else
     end
 end
 
-print("=== Turtle Worker Installer v3.0 ===")
-print("Disk-based deployment system with library support")
+print("=== Turtle Worker Installer v4.0 ===")
+print("Disk-based deployment system with library and role support")
 print("")
 
 -- Startup script template
@@ -82,10 +95,18 @@ local STARTUP_TEMPLATE = [[-- Auto-generated worker startup script
 -- Version: %s
 -- Generated: %s
 
-    local function safeStart()
+local function safeStart()
     -- Check for required files
-    local requiredFiles = {"worker.lua", "lib/swarm_common.lua", "lib/swarm_ui.lua", "lib/swarm_worker_lib.lua"}
-    local missing = {}    for _, file in ipairs(requiredFiles) do
+    local requiredFiles = {
+        "worker.lua",
+      "lib/swarm_common.lua", 
+        "lib/swarm_ui.lua", 
+        "lib/swarm_worker_lib.lua",
+        "lib/roles.lua"
+    }
+    local missing = {}
+    
+    for _, file in ipairs(requiredFiles) do
         if not fs.exists(file) then
             table.insert(missing, file)
         end
@@ -167,10 +188,25 @@ local function findSourceFiles()
     local requiredFiles = {"worker.lua"}
     
     -- Only require library files if they don't already exist locally
-    if not (fs.exists("lib/swarm_common.lua") and fs.exists("lib/swarm_ui.lua") and fs.exists("lib/swarm_worker_lib.lua")) then
-        table.insert(requiredFiles, "lib/swarm_common.lua")
-        table.insert(requiredFiles, "lib/swarm_ui.lua")
-        table.insert(requiredFiles, "lib/swarm_worker_lib.lua")
+    local requiredLibs = {
+        "lib/swarm_common.lua",
+        "lib/swarm_ui.lua",
+        "lib/swarm_worker_lib.lua",
+        "lib/roles.lua"
+    }
+    
+    local allLibsExist = true
+    for _, lib in ipairs(requiredLibs) do
+        if not fs.exists(lib) then
+            allLibsExist = false
+            break
+        end
+    end
+    
+    if not allLibsExist then
+        for _, lib in ipairs(requiredLibs) do
+            table.insert(requiredFiles, lib)
+        end
     end
     
     local installPath = shell.getRunningProgram()
@@ -239,10 +275,38 @@ local function install()
     end
     
     -- Step 3: Install libraries (if needed)
-    local allLibsExist = fs.exists("lib/swarm_common.lua") and fs.exists("lib/swarm_ui.lua") and fs.exists("lib/swarm_worker_lib.lua")
+    local coreLibs = {
+        "lib/swarm_common.lua",
+        "lib/swarm_ui.lua",
+        "lib/swarm_worker_lib.lua",
+        "lib/roles.lua"
+    }
+    
+    local allLibsExist = true
+    for _, lib in ipairs(coreLibs) do
+        if not fs.exists(lib) then
+            allLibsExist = false
+            break
+        end
+    end
     
     if allLibsExist then
-        SwarmCommon.logStep("Libraries already installed, skipping library installation", "ok")
+        SwarmCommon.logStep("Core libraries already installed, skipping library installation", "ok")
+        
+        -- Check for role libraries (optional but recommended)
+        local roleLibsExist = fs.exists("lib/roles") and fs.isDir("lib/roles")
+        if roleLibsExist then
+            local roleLibs = fs.list("lib/roles")
+            local roleCount = 0
+            for _, file in ipairs(roleLibs) do
+                if file:match("%.lua$") then
+                    roleCount = roleCount + 1
+                end
+            end
+            SwarmCommon.logStep("Role libraries found: " .. roleCount .. " roles", "ok")
+        else
+            SwarmCommon.logStep("Note: lib/roles/ directory not found (optional)", "info")
+        end
     else
         if not SwarmCommon.installLibraries(sourceFiles) then
             SwarmCommon.logStep("Library installation failed", "error")
@@ -292,13 +356,33 @@ local function install()
     print("Auto-start: Enabled")
     print("")
     print("Installed files:")
-    print("  worker.lua       - Main worker program")
+    print("  worker.lua               - Main worker program v4.0")
     print("  lib/swarm_common.lua     - Common library")
     print("  lib/swarm_ui.lua         - UI library")
     print("  lib/swarm_worker_lib.lua - Worker library")
-    print("  startup.lua          - Auto-boot script")
-    print("  programs/            - Custom programs")
-    print("  backups/             - Backup files")
+    print("  lib/roles.lua            - Role management system")
+    if fs.exists("lib/roles") and fs.isDir("lib/roles") then
+        local roleLibs = fs.list("lib/roles")
+        local roleCount = 0
+        for _, file in ipairs(roleLibs) do
+            if file:match("%.lua$") then
+                roleCount = roleCount + 1
+                print("  lib/roles/" .. file .. string.rep(" ", 16 - #file) .. " - Role library")
+            end
+        end
+        if roleCount == 0 then
+            print("  lib/roles/               - (directory created, no roles yet)")
+        end
+    end
+    print("  startup.lua              - Auto-boot script")
+    print("  programs/                - Custom programs")
+    print("  backups/                 - Backup files")
+    print("")
+    print("v4.0 Features:")
+    print("  • Role-based task specialization")
+    print("  • Persistent role configuration")
+    print("  • Role-specific command routing")
+    print("  • Backward compatible with v3.0")
     print("")
     print("Recovery options:")
     print("  Create '.recovery_mode' to disable auto-start")
