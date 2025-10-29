@@ -49,8 +49,14 @@ end
 local SwarmCommon = require("lib.swarm_common")
 local SwarmUI = require("lib.swarm_ui")
 
+-- Load RoleManager to get role colors
+local RoleManager = nil
+if fs.exists("lib/roles.lua") then
+    RoleManager = require("lib.roles")
+end
+
 -- Monitor configuration
-local UPDATE_INTERVAL = 5 -- Seconds between position updates
+local UPDATE_INTERVAL = 3 -- Seconds between position updates
 
 -- Initialize components
 local modem, err = SwarmCommon.initModem()
@@ -103,6 +109,8 @@ local function updateDisplay()
     monitor.write(" ID ")
     monitor.write(string.rep(" ", monWidth - 4))
     monitor.setCursorPos(6, 4)
+    monitor.write("ROLE")
+    monitor.setCursorPos(18, 4)
     monitor.write("POSITION")
     
     -- Display turtle list
@@ -119,14 +127,21 @@ local function updateDisplay()
     -- Sort by ID
     table.sort(sortedTurtles, function(a, b) return a.id < b.id end)
     
-    -- Display each turtle with alternating colors
+    -- Display each turtle with role-based colors
     for i, entry in ipairs(sortedTurtles) do
         if line > monHeight - 1 then break end
         
-        -- Alternating row colors
-        local rowBg = (i % 2 == 0) and colors.gray or colors.black
+        -- Get role color (default to gray if no role or role not found)
+        local roleColor = colors.gray
+        if entry.data.role and RoleManager then
+            local roleMetadata = RoleManager.getRole(entry.data.role)
+            if roleMetadata and roleMetadata.color then
+                roleColor = roleMetadata.color
+            end
+        end
         
-        monitor.setBackgroundColor(rowBg)
+        -- Use role color for row background
+        monitor.setBackgroundColor(roleColor)
         monitor.setCursorPos(1, line)
         monitor.write(string.rep(" ", monWidth))
         
@@ -137,17 +152,26 @@ local function updateDisplay()
         local idText = " #" .. entry.id .. " "
         monitor.write(idText)
         
-        -- Position
-        monitor.setBackgroundColor(rowBg)
+        -- Role name
+        monitor.setBackgroundColor(roleColor)
         monitor.setCursorPos(6, line)
+        monitor.setTextColor(colors.white)
+        local roleName = entry.data.roleName or "Worker"
+        if #roleName > 10 then
+            roleName = roleName:sub(1, 9) .. "."
+        end
+        monitor.write(roleName)
+        
+        -- Position
+        monitor.setCursorPos(18, line)
         monitor.setTextColor(SwarmUI.THEME.positionText)
         
         local position = {x = entry.data.x, y = entry.data.y, z = entry.data.z}
         local posText = SwarmCommon.formatPosition(position)
         
         if entry.data.x then
-            if #posText > (monWidth - 6) then
-                posText = posText:sub(1, monWidth - 9) .. "..."
+            if #posText > (monWidth - 18) then
+                posText = posText:sub(1, monWidth - 21) .. "..."
             end
             monitor.write(posText)
         else
@@ -186,6 +210,12 @@ local function handleMessage(message)
         local turtle = turtles[message.id]
         turtle.lastSeen = os.epoch("utc")
         turtle.version = message.version
+        
+        -- Capture role information
+        if message.role then
+            turtle.role = message.role
+            turtle.roleName = message.roleName
+        end
         
         -- Parse status message for position and fuel
         if message.message and message.message:find("Fuel:") then

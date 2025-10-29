@@ -1,12 +1,14 @@
--- Production Worker v3.0
+-- Production Worker v4.0
 -- Turtle swarm worker - handles remote commands and program execution
+-- Now with role-based functionality
 -- Refactored to use common libraries for reduced duplication
 
 local SwarmCommon = require("lib.swarm_common")
 local SwarmWorker = require("lib.swarm_worker_lib")
+local RoleManager = require("lib.roles")
 
 -- Worker configuration
-local WORKER_VERSION = "3.0"
+local WORKER_VERSION = "4.0"
 local PROGRAMS_DIR = "programs"
 
 -- Worker state
@@ -14,6 +16,7 @@ local turtleID = os.getComputerID()
 local shellSessions = {}
 local sessionCounter = 0
 local programDeployments = {}
+local currentRole = nil
 
 -- Initialize modem
 local modem, err = SwarmCommon.initModem()
@@ -25,15 +28,27 @@ end
 
 SwarmCommon.openChannels(modem, {SwarmCommon.COMMAND_CHANNEL})
 
-print("Worker Turtle #" .. turtleID .. " online v" .. WORKER_VERSION)
+-- Load role if assigned
+currentRole, err = RoleManager.loadRole()
+if currentRole then
+    print("Worker Turtle #" .. turtleID .. " online v" .. WORKER_VERSION)
+    print("Role: " .. currentRole.metadata.name .. " (" .. currentRole.roleId .. ")")
+else
+    print("Worker Turtle #" .. turtleID .. " online v" .. WORKER_VERSION)
+    print("No role assigned (base worker)")
+end
 print("Listening on channel " .. SwarmCommon.COMMAND_CHANNEL)
 
--- Enhanced message sending with version info
+-- Enhanced message sending with version and role info
 local function sendMessage(messageType, content, sessionId, success)
+    local roleInfo = RoleManager.getRoleInfo()
+    
     local options = {
         version = WORKER_VERSION,
         sessionId = sessionId,
-        success = success
+        success = success,
+        role = roleInfo.assigned and roleInfo.roleId or nil,
+        roleName = roleInfo.assigned and roleInfo.roleName or nil
     }
     
     local message = SwarmCommon.createMessage(messageType, content, options)
@@ -426,6 +441,133 @@ local commandHandlers = {
         local totalChunks = tonumber(args[3])
         local chunkData = args[4]
         handleProgramChunk(programName, chunkNum, totalChunks, chunkData)
+    end,
+    
+    -- Role management commands
+    assignRole = function(args, targetId)
+        print("Command: assignRole")
+        local roleId = args[1]
+        local config = args[2] or {}
+        
+        local success, result = RoleManager.assignRole(roleId, config)
+        if success then
+            currentRole = result
+            sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                       "Role assigned: " .. roleId .. " (" .. result.metadata.name .. ")", nil, true)
+        else
+            sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                       "Failed to assign role: " .. tostring(result), nil, false)
+        end
+    end,
+    
+    clearRole = function(args, targetId)
+        print("Command: clearRole")
+        RoleManager.clearRole()
+        currentRole = nil
+        sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, "Role cleared", nil, true)
+    end,
+    
+    getRoleInfo = function(args, targetId)
+        print("Command: getRoleInfo")
+        local info = RoleManager.getRoleInfo()
+        local message = info.assigned and 
+                       string.format("Role: %s (%s)", info.roleName, info.roleId) or
+                       "No role assigned"
+        sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, message, nil, true)
+    end,
+    
+    setRoleConfig = function(args, targetId)
+        print("Command: setRoleConfig")
+        local fieldName = args[1]
+        local value = args[2]
+        
+        if not currentRole then
+            sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, "No role assigned", nil, false)
+            return
+        end
+        
+        local success, err = currentRole:setConfig(fieldName, value)
+        if success then
+            RoleManager.saveRole(currentRole)
+            sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                       "Config updated: " .. fieldName, nil, true)
+        else
+            sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                       "Failed to update config: " .. tostring(err), nil, false)
+        end
+    end,
+    
+    getRoleConfig = function(args, targetId)
+        print("Command: getRoleConfig")
+        if not currentRole then
+            sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, "No role assigned", nil, false)
+            return
+        end
+        
+        local fieldName = args[1]
+        if fieldName then
+            local value = currentRole:getConfig(fieldName)
+            sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                       fieldName .. " = " .. textutils.serialize(value), nil, true)
+        else
+            local config = textutils.serialize(currentRole.config)
+            sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                       "Role config: " .. config, nil, true)
+        end
+    end,
+    
+    listRoles = function(args, targetId)
+        print("Command: listRoles")
+        local roles = RoleManager.listRoles()
+        local roleList = {}
+        for _, role in ipairs(roles) do
+            table.insert(roleList, role.id .. ": " .. role.name)
+        end
+        sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                   "Available roles:\n" .. table.concat(roleList, "\n"), nil, true)
+    end,
+    
+    -- Role-specific command routing
+    roleCommand = function(args, targetId)
+        print("Command: roleCommand")
+        if not currentRole then
+            sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                       "No role assigned - cannot execute role commands", nil, false)
+            return
+        end
+        
+        local roleCmd = args[1]
+        local roleArgs = {}
+        for i = 2, #args do
+            table.insert(roleArgs, args[i])
+        end
+        
+        -- Check if role has a library with command handler
+        local roleLib = currentRole:getLibrary()
+        if roleLib and roleLib.handleCommand then
+            local success, result = pcall(roleLib.handleCommand, currentRole, roleCmd, roleArgs)
+            if success and result ~= false then
+                sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                           "Role command completed: " .. roleCmd, nil, true)
+            else
+                local errMsg = result or "Command failed"
+                sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                           "Role command failed: " .. tostring(errMsg), nil, false)
+            end
+        elseif currentRole:hasCommand(roleCmd) then
+            -- Use command from role metadata
+            local success, result = currentRole:executeCommand(roleCmd, roleArgs)
+            if success then
+                sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                           "Role command completed: " .. roleCmd, nil, true)
+            else
+                sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                           "Role command failed: " .. tostring(result), nil, false)
+            end
+        else
+            sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
+                       "Unknown role command: " .. roleCmd, nil, false)
+        end
     end
 }
 
@@ -437,7 +579,22 @@ sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, "Worker ready", nil, true)
 while true do
     local event, side, channel, replyChannel, message, distance = os.pullEvent("modem_message")
     
-    if type(message) == "table" and (not message.targetId or message.targetId == turtleID) then
+    -- Check if message is for this turtle (by ID or role)
+    local isTargeted = false
+    
+    if type(message) == "table" then
+        -- Check direct ID targeting
+        if not message.targetId or message.targetId == turtleID then
+            isTargeted = true
+        end
+        
+        -- Check role-based targeting
+        if message.targetRole and currentRole and currentRole.roleId == message.targetRole then
+            isTargeted = true
+        end
+    end
+    
+    if isTargeted then
         local command = message.command
         local args = message.args or {}
         

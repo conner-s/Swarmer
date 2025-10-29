@@ -1,5 +1,6 @@
--- Fleet Management Tool v3.0
+-- Fleet Management Tool v4.0
 -- Bulk operations and health monitoring for worker turtles
+-- Now with role-based targeting
 -- Refactored to use common libraries
 
 local SwarmCommon = require("lib.swarm_common")
@@ -308,7 +309,7 @@ end
 
 -- Create main menu
 local function createMainMenu()
-    local menu = SwarmUI.Menu.new("Fleet Management v3.0")
+    local menu = SwarmUI.Menu.new("Fleet Management v4.0")
     
     menu:addOption("1", "Discover fleet", discoverFleet)
     menu:addOption("2", "Fleet status report", function()
@@ -317,9 +318,67 @@ local function createMainMenu()
     end)
     menu:addOption("3", "Bulk command", bulkCommand)
     menu:addOption("4", "Targeted command", targetedCommand)
-    menu:addOption("5", "Health monitor", healthMonitor)
-    menu:addOption("6", "Emergency recovery", emergencyRecovery)
-    menu:addOption("7", "Export fleet data", exportFleetData)
+    menu:addOption("5", "Role-based command", function()
+        write("Target role (miner, courier, builder, etc.): ")
+        local targetRole = read()
+        write("Command: ")
+        local command = read()
+        
+        local args = {}
+        write("Arguments (space-separated, optional): ")
+        local argString = read()
+        if argString and argString ~= "" then
+            for arg in argString:gmatch("%S+") do
+                table.insert(args, arg)
+            end
+        end
+        
+        print("Sending '" .. command .. "' to all '" .. targetRole .. "' turtles...")
+        SwarmCommon.sendRoleCommand(modem, targetRole, command, args)
+        
+        local replies = SwarmCommon.collectReplies(5)
+        print("\n=== Responses from " .. targetRole .. " turtles ===")
+        for _, response in ipairs(replies) do
+            if response.role == targetRole then
+                local status = response.success and "✓" or "✗"
+                print(status .. " Turtle #" .. response.id .. ": " .. (response.message or "No response"))
+            end
+        end
+        
+        print("Received " .. #replies .. " responses")
+    end)
+    menu:addOption("6", "Health monitor", healthMonitor)
+    menu:addOption("7", "Emergency recovery", emergencyRecovery)
+    menu:addOption("8", "Export fleet data", exportFleetData)
+    menu:addOption("9", "Show fleet by role", function()
+        print("\n=== Fleet by Role ===")
+        
+        -- Get role info from all turtles
+        SwarmCommon.sendCommand(modem, "getRoleInfo")
+        local replies = SwarmCommon.collectReplies(3)
+        
+        local roleGroups = {}
+        for _, reply in ipairs(replies) do
+            local role = reply.role or "unassigned"
+            if not roleGroups[role] then
+                roleGroups[role] = {}
+            end
+            table.insert(roleGroups[role], reply.id)
+        end
+        
+        for role, turtles in pairs(roleGroups) do
+            print("\n" .. role .. " (" .. #turtles .. " turtles):")
+            table.sort(turtles)
+            local turtleList = {}
+            for _, id in ipairs(turtles) do
+                table.insert(turtleList, "#" .. id)
+            end
+            print("  " .. table.concat(turtleList, ", "))
+        end
+        
+        print("\nPress Enter to continue...")
+        read()
+    end)
     menu:addOption("0", "Exit", function() return false end)
     
     return menu

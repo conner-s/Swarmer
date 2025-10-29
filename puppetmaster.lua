@@ -1,12 +1,12 @@
--- Puppetmaster Control Program v3.0
--- Controls worker turtles wirelessly with enhanced UI and reduced duplication
+-- Puppetmaster Control Program v4.0
+-- Controls worker turtles wirelessly with enhanced UI and role-based management
 -- Refactored to use common libraries
 
 local SwarmCommon = require("lib.swarm_common")
 local SwarmUI = require("lib.swarm_ui")
 
 -- Version information
-local PUPPETMASTER_VERSION = "3.0"
+local PUPPETMASTER_VERSION = "4.0"
 
 -- Debug configuration
 local DEBUG_COMMANDS = false
@@ -355,6 +355,177 @@ function provisionProgram(programName)
     return true
 end
 
+-- Role management menu
+local function roleManagementMenu()
+    while true do
+        term.clear()
+        term.setCursorPos(1, 1)
+        print("=== Role Management ===\n")
+        print("1. List available roles")
+        print("2. Assign role to turtle")
+        print("3. Assign role to all turtles")
+        print("4. Assign role to role group")
+        print("5. Get turtle role info")
+        print("6. Set role config")
+        print("7. Clear turtle role")
+        print("8. Send role-specific command")
+        print("0. Back to main menu")
+        print("")
+        write("Choice: ")
+        
+        local choice = read()
+        
+        if choice == "1" then
+            print("\nRequesting role list from a worker...")
+            sendCommand("listRoles")
+            listenForReplies(3)
+            print("\nPress Enter to continue...")
+            read()
+            
+        elseif choice == "2" then
+            local targetId = SwarmUI.promptNumber("Turtle ID: ", 1)
+            write("Role ID (miner, courier, builder, farmer, lumberjack): ")
+            local roleId = read()
+            
+            -- Get role config if needed
+            write("Configure role now? (y/n): ")
+            local configNow = read()
+            local config = {}
+            
+            if configNow == "y" then
+                print("Enter config values (blank to skip):")
+                if roleId == "miner" or roleId == "courier" or roleId == "builder" or 
+                   roleId == "farmer" or roleId == "lumberjack" then
+                    print("(Note: Use separate 'Set role config' option for complex configs like positions)")
+                end
+            end
+            
+            print("\nAssigning role '" .. roleId .. "' to turtle #" .. targetId .. "...")
+            sendCommand("assignRole", {roleId, config}, targetId)
+            listenForReplies(3)
+            print("\nPress Enter to continue...")
+            read()
+            
+        elseif choice == "3" then
+            write("Role ID: ")
+            local roleId = read()
+            
+            if SwarmUI.confirm("Assign role '" .. roleId .. "' to ALL turtles?") then
+                print("\nBroadcasting role assignment...")
+                sendCommand("assignRole", {roleId, {}})
+                listenForReplies(5)
+            end
+            print("\nPress Enter to continue...")
+            read()
+            
+        elseif choice == "4" then
+            write("Target role group: ")
+            local targetRole = read()
+            write("New role to assign: ")
+            local newRole = read()
+            
+            if SwarmUI.confirm("Assign role '" .. newRole .. "' to all '" .. targetRole .. "' turtles?") then
+                print("\nSending to role group '" .. targetRole .. "'...")
+                SwarmCommon.sendRoleCommand(modem, targetRole, "assignRole", {newRole, {}})
+                listenForReplies(5)
+            end
+            print("\nPress Enter to continue...")
+            read()
+            
+        elseif choice == "5" then
+            local targetId = SwarmUI.promptNumber("Turtle ID (0 for all): ", 0)
+            
+            if targetId == 0 then
+                print("\nGetting role info from all turtles...")
+                sendCommand("getRoleInfo")
+            else
+                print("\nGetting role info from turtle #" .. targetId .. "...")
+                sendCommand("getRoleInfo", {}, targetId)
+            end
+            listenForReplies(3)
+            print("\nPress Enter to continue...")
+            read()
+            
+        elseif choice == "6" then
+            local targetId = SwarmUI.promptNumber("Turtle ID: ", 1)
+            write("Config field name: ")
+            local fieldName = read()
+            write("Config value (use format: {x=10,y=20,z=30} for positions): ")
+            local valueStr = read()
+            
+            -- Try to parse value
+            local value = tonumber(valueStr)
+            if not value then
+                -- Try as boolean
+                if valueStr == "true" then
+                    value = true
+                elseif valueStr == "false" then
+                    value = false
+                elseif valueStr:match("^{") then
+                    -- Try to parse as table
+                    local success, result = pcall(textutils.unserialize, valueStr)
+                    if success then
+                        value = result
+                    else
+                        value = valueStr
+                    end
+                else
+                    value = valueStr
+                end
+            end
+            
+            print("\nSetting config '" .. fieldName .. "' on turtle #" .. targetId .. "...")
+            sendCommand("setRoleConfig", {fieldName, value}, targetId)
+            listenForReplies(3)
+            print("\nPress Enter to continue...")
+            read()
+            
+        elseif choice == "7" then
+            local targetId = SwarmUI.promptNumber("Turtle ID: ", 1)
+            
+            if SwarmUI.confirm("Clear role from turtle #" .. targetId .. "?") then
+                sendCommand("clearRole", {}, targetId)
+                listenForReplies(3)
+            end
+            print("\nPress Enter to continue...")
+            read()
+            
+        elseif choice == "8" then
+            write("Target (ID or 'role:rolename'): ")
+            local target = read()
+            write("Role command: ")
+            local roleCmd = read()
+            write("Arguments (space-separated): ")
+            local argString = read()
+            
+            local args = {roleCmd}
+            for arg in argString:gmatch("%S+") do
+                table.insert(args, arg)
+            end
+            
+            if target:match("^role:") then
+                local roleName = target:match("^role:(.+)")
+                print("\nSending role command to all '" .. roleName .. "' turtles...")
+                SwarmCommon.sendRoleCommand(modem, roleName, "roleCommand", args)
+            else
+                local targetId = tonumber(target)
+                if targetId then
+                    print("\nSending role command to turtle #" .. targetId .. "...")
+                    sendCommand("roleCommand", args, targetId)
+                else
+                    print("Invalid target")
+                end
+            end
+            listenForReplies(5)
+            print("\nPress Enter to continue...")
+            read()
+            
+        elseif choice == "0" then
+            break
+        end
+    end
+end
+
 -- Create main menu
 local function createMainMenu()
     local menu = SwarmUI.Menu.new("Puppetmaster Control v" .. PUPPETMASTER_VERSION)
@@ -434,6 +605,10 @@ local function createMainMenu()
             sendCommand("reboot")
             listenForReplies(2)
         end
+    end)
+    
+    menu:addOption("9", "Role Management", function()
+        roleManagementMenu()
     end)
     
     menu:addOption("I", "Import Program", function()

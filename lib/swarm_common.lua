@@ -89,12 +89,20 @@ function SwarmCommon.sendCommand(modem, command, args, targetId, options)
         timestamp = os.epoch("utc")
     }
     
-    -- Add any additional options
+    -- Add any additional options (e.g., targetRole for role-based filtering)
     for k, v in pairs(options) do
         message[k] = v
     end
     
     return SwarmCommon.sendMessage(modem, message, SwarmCommon.COMMAND_CHANNEL, SwarmCommon.REPLY_CHANNEL)
+end
+
+-- Role-aware command sending
+function SwarmCommon.sendRoleCommand(modem, targetRole, command, args, options)
+    options = options or {}
+    options.targetRole = targetRole
+    
+    return SwarmCommon.sendCommand(modem, command, args, nil, options)
 end
 
 -- Reply collection utilities
@@ -395,6 +403,80 @@ end
 -- Session management utilities
 function SwarmCommon.generateSessionId()
     return os.epoch("utc") % 100000
+end
+
+-- JSON utilities (simple serialization for config files)
+function SwarmCommon.serializeJSON(value, indent)
+    indent = indent or 0
+    local indentStr = string.rep("  ", indent)
+    
+    if type(value) == "table" then
+        local items = {}
+        local isArray = true
+        local count = 0
+        
+        -- Check if it's an array
+        for k, v in pairs(value) do
+            count = count + 1
+            if type(k) ~= "number" or k ~= count then
+                isArray = false
+                break
+            end
+        end
+        
+        if isArray then
+            -- Array format
+            local parts = {}
+            for i, v in ipairs(value) do
+                table.insert(parts, indentStr .. "  " .. SwarmCommon.serializeJSON(v, indent + 1))
+            end
+            return "[\n" .. table.concat(parts, ",\n") .. "\n" .. indentStr .. "]"
+        else
+            -- Object format
+            local parts = {}
+            for k, v in pairs(value) do
+                local key = type(k) == "string" and ('"' .. k .. '"') or tostring(k)
+                table.insert(parts, indentStr .. "  " .. key .. ": " .. SwarmCommon.serializeJSON(v, indent + 1))
+            end
+            return "{\n" .. table.concat(parts, ",\n") .. "\n" .. indentStr .. "}"
+        end
+    elseif type(value) == "string" then
+        return '"' .. value:gsub('"', '\\"') .. '"'
+    elseif type(value) == "number" or type(value) == "boolean" then
+        return tostring(value)
+    elseif value == nil then
+        return "null"
+    else
+        return '""'
+    end
+end
+
+function SwarmCommon.writeJSON(path, data)
+    local json = SwarmCommon.serializeJSON(data)
+    return SwarmCommon.writeFile(path, json)
+end
+
+function SwarmCommon.readJSON(path)
+    local content, err = SwarmCommon.readFile(path)
+    if not content then
+        return nil, err
+    end
+    
+    -- Use textutils.unserialiseJSON if available (CC:Tweaked 1.96+)
+    if textutils.unserialiseJSON then
+        local success, data = pcall(textutils.unserialiseJSON, content)
+        if success then
+            return data
+        end
+    end
+    
+    -- Fallback to textutils.unserialize for simple cases
+    local success, data = pcall(textutils.unserialize, content)
+    if success then
+        return data
+    end
+    
+    return nil, "Failed to parse JSON"
 end
 
 -- Error handling utilities
