@@ -1,0 +1,8 @@
+# Ignore all deployment builds
+*
+
+# Except this .gitignore
+!.gitignore
+
+# Allow example/template deployment if created
+# !example/
