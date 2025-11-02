@@ -1,0 +1,28 @@
+---
+description: Any tasks that impact the Swarmer project or any changes suggested to it
+alwaysApply: false
+---
+# Agent Considerations
+
+Whenever making any code edits or evaluating rules, always consider whether the change introduces an opportunity for improvement, refactoring, or greater idiomatic style.
+
+## What the Agent Should Do
+
+- Proactively suggest improvements for code clarity, maintainability, or idiomatic usage, not just for the code being modified, but also for related rules or structures.
+- Pay attention to repeated code (duplication). If similar or identical functions exist in more than one place, recommend centralizing them (e.g., into a shared library).
+- Monitor for structural changes (e.g., a new top-level directory being added) that might invalidate or require updates to existing rules or documentation.
+
+## Examples of When to Suggest a Rule Update
+
+- The project structure changes (such as when a new directory is added at the top level, or when the intended use of an existing directory evolves).
+- You detect copy-paste or slightly-modified versions of a function, especially if they're in multiple files—in such cases, suggest centralizing them.
+- Naming patterns, conventions, or idioms drift or are unclear, and a more standardized approach can be suggested.
+
+## Making it Understandable for AI
+
+- Use clear, explicit language specifying "what" and "why" for suggestions.
+- Provide justification for each recommendation so downstream agents understand reasoning.
+- Be proactive in detection, but avoid making speculative or irrelevant suggestions.
+- Where possible, tie suggestions directly to explicit project rules, conventions, or previously-documented standards.
+
+Summary: Always critically review edits and project rules. If you spot redundancies, changing circumstances, or ways to make things more consistent or idiomatic, suggest rule (or code) improvements, and document your reasoning for traceability.

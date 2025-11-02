@@ -37,6 +37,29 @@ This project has been refactored to use a modular library system:
 - **Backward compatibility**: Original APIs still supported
 - **Role system**: v4.0 adds role-based management (see above)
 
+## Development Environment Setup
+
+### VS Code Configuration
+
+To enable file mounting in craftos-pc, configure `craftos-pc.additionalArguments` in your VS Code settings:
+
+**Windows:**
+```
+craftos-pc.additionalArguments: --mount /local_mount=C:\Users\{user}\craftos-mount
+```
+
+**macOS:**
+```
+craftos-pc.additionalArguments: --mount /local_mount=/Users/{user}/craftos-mount
+```
+
+**Linux:**
+```
+craftos-pc.additionalArguments: --mount /local_mount=/home/{user}/craftos-mount
+```
+
+Replace `{user}` with your actual username.
+
 ## Quick Start
 
 ### Wireless Provisioning (NEW - Recommended!) 📡

@@ -1,0 +1,56 @@
+---
+globs: **
+alwaysApply: false
+---
+# Project Structure definition
+
+This rule defines the project structure for how the Swarmer project should be built out when functionality is requested to be added to it.
+
+The top level directory structure at the moment is
+
+- **Root Level Files**
+
+  - Core system files that are deployed to ComputerCraft machines:
+    - `worker.lua` - Main turtle worker program (runs on turtles)
+    - `puppetmaster.lua` - Control interface (runs on advanced pocket computer)
+    - `monitor.lua` - Fleet monitoring display (runs on advanced computer with monitor)
+    - `fleet_manager.lua` - Bulk fleet operations utility
+    - `install.lua` - Installation/setup script for turtles
+    - `provision_server.lua` - Wireless file provisioning server
+    - `provision_client.lua` - Wireless file provisioning client (for turtles)
+    - `distribute.lua` - File distribution helper utility
+  - Build scripts:
+    - `build.ps1` - PowerShell build script (Windows)
+    - `build.sh` - Bash build script (Linux/Mac)
+    - These scripts package files into the deployment directory with flattened structure
+  - `README.md` - Main project documentation and quick start guide
+
+- **deployment**
+
+  - This is the folder where output files to upload to computercraft machines goes and all the files that get put here are ignored from version control as they're either only for testing or deploying out to machines.
+  - Files should not be manually created here, they are populated by executing a build via build.ps1 or build.sh
+  - The build scripts flatten the directory structure (replacing `/` with `__`) for easier ComputerCraft import, and include a manifest.txt for reconstruction
+
+- **docs**
+
+  - This directory is where markdown documentation files explaining functionality or version upgrades is to go.
+  - In the future this is intended to be split out to its own repository, but as functionality remains limited it makes sense to keep it in a single docs directory within the project
+  - Evaluate when it may be beneficial to start breaking this out and if the agent deems it so alert the project administrator through the prompt output why it may be good to change
+
+- **lib**
+
+  - This directory is where the common functions that are shared across multiple components of the Swarmer project go. Containing library files for things such as common Swarm communication functions, definitions for the different types of worker roles, and user interface menus
+  - Functions that are shared between different use cases, multiple roles, or multiple programs should be put in their own file here and included as part of the build and import process for the programs within.
+  - **lib/roles/** - Subdirectory containing individual role-specific library files:
+    - Each role (miner, courier, builder, etc.) has its own file here
+    - Role libraries define role-specific commands and behaviors
+    - These are loaded dynamically based on role assignment
+  - Files in lib are imported using Lua's require system: `require("lib.swarm_common")`, `require("lib.roles.miner")`, etc.
+  - The build process ensures all required libraries are included in deployment packages
+
+- **programs**
+  - This includes programs that are distributed to the turtles/computers that work in the swarm.
+  - These programs should accomplish individual tasks and are meant to be called as external functions for the worker.lua
+  - Worker.lua executes programs from this directory when commands are received
+  - Programs can be deployed wirelessly via the provisioning system or manually copied
+  - Examples: digDown.lua, stairs.lua, hello.lua
