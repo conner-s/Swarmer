@@ -44,17 +44,20 @@ This project has been refactored to use a modular library system:
 To enable file mounting in craftos-pc, configure `craftos-pc.additionalArguments` in your VS Code settings:
 
 **Windows:**
-```
+
+```text
 craftos-pc.additionalArguments: --mount /local_mount=C:\Users\{user}\craftos-mount
 ```
 
 **macOS:**
-```
+
+```text
 craftos-pc.additionalArguments: --mount /local_mount=/Users/{user}/craftos-mount
 ```
 
 **Linux:**
-```
+
+```text
 craftos-pc.additionalArguments: --mount /local_mount=/home/{user}/craftos-mount
 ```
 
@@ -81,6 +84,7 @@ provision_server
 ```
 
 **Advantages:**
+
 - ✅ Send complete worker package (13 files, 50KB+) - too large for disk!
 - ✅ No 512KB disk limitation
 - ✅ Fast updates to multiple turtles

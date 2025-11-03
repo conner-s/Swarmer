@@ -100,7 +100,7 @@ local function deployToTurtle()
     end
 end
 
-function showDiskInstructions()
+function ShowDiskInstructions()
     print("\n=== Disk Transfer Method ===")
     print("1. Craft a floppy disk")
     print("2. Insert disk into this computer")
@@ -114,7 +114,7 @@ function showDiskInstructions()
     SwarmUI.showStatus("Recommended method for reliability", "info")
 end
 
-function showPastebinInstructions()
+function ShowPastebinInstructions()
     print("\n=== Pastebin Method ===")
     print("Prerequisites: HTTP API must be enabled")
     print("")

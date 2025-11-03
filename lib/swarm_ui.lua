@@ -348,7 +348,10 @@ function SwarmUI.confirm(prompt)
 end
 
 -- Monitor utilities
+---@return ccTweaked.peripheral.Monitor|nil
+---@return string|nil
 function SwarmUI.initMonitor(scale)
+    ---@type ccTweaked.peripheral.Monitor
     local monitor = peripheral.find("monitor")
     if not monitor then
         return nil, "No monitor found"
