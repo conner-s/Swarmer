@@ -1,12 +1,14 @@
--- Provision Server v1.0
--- Wirelessly send files to turtles running provision_client.lua
--- Refactored from distribute.lua to use file transfer
+-- Provision Server v4.0
+-- Unified deployment system - wireless provisioning and manual deployment methods
+-- Merged functionality from distribute.lua
 
 local SwarmCommon = require("lib.swarm_common")
 local SwarmUI = require("lib.swarm_ui")
+local SwarmFile = require("lib.swarm_file")
 
-print("=== Provision Server v1.0 ===")
-print("Wirelessly provision turtles with complete file sets")
+print("=== Provision Server v4.0 ===")
+print("Unified deployment system for turtle management")
+print("Wireless provisioning and manual deployment methods")
 print("")
 
 -- Initialize components
@@ -90,7 +92,7 @@ end
 
 local function sendFile(targetId, filePath)
     -- Read file
-    local content, err = SwarmCommon.readFile(filePath)
+    local content, err = SwarmFile.readFile(filePath)
     if not content then
         SwarmUI.showStatus("Failed to read " .. filePath .. ": " .. err, "error")
         return false
@@ -288,36 +290,129 @@ local function verifyFiles(targetId)
     print("Verification commands sent. Check turtle #" .. targetId .. " for results.")
 end
 
+local function discoverTurtles()
+    print("\nDiscovering turtles...")
+    local turtles = SwarmCommon.discoverTurtles(modem, 3)
+    
+    local count = 0
+    for id, turtle in pairs(turtles) do
+        count = count + 1
+        print("  Found: Turtle #" .. id .. " (v" .. (turtle.version or "unknown") .. ")")
+    end
+    
+    SwarmUI.showStatus("Discovery complete: " .. count .. " turtles found", count > 0 and "success" or "warning")
+    return turtles
+end
+
+local function checkStatus()
+    print("\nChecking worker status...")
+    
+    SwarmCommon.sendCommand(modem, "getVersion")
+    
+    local replies = SwarmCommon.collectReplies(3)
+    local hasWorkers = false
+    
+    for _, reply in ipairs(replies) do
+        if reply.message then
+            hasWorkers = true
+            print("  Turtle #" .. reply.id .. ": " .. reply.message)
+        end
+    end
+    
+    if not hasWorkers then
+        SwarmUI.showStatus("No workers responded (may need installation)", "warning")
+    else
+        SwarmUI.showStatus("Found " .. #replies .. " active workers", "success")
+    end
+end
+
+local function showDiskInstructions()
+    print("\n=== Disk Transfer Method ===")
+    print("1. Craft a floppy disk")
+    print("2. Insert disk into this computer")
+    print("3. Run: cp install.lua disk/install.lua")
+    print("4. Take disk to target turtle")
+    print("5. Insert disk into turtle")
+    print("6. On turtle: cp disk/install.lua install.lua")
+    print("7. On turtle: install.lua")
+    print("8. Follow installation prompts")
+    print("")
+    SwarmUI.showStatus("Recommended method for reliability", "info")
+end
+
+local function showPastebinInstructions()
+    print("\n=== Pastebin Method ===")
+    print("Prerequisites: HTTP API must be enabled")
+    print("")
+    print("1. Upload installer: pastebin put install.lua")
+    print("2. Note the returned code (e.g., 'a1b2c3d4')")
+    print("3. On each turtle: pastebin get <code> install.lua")
+    print("4. On turtle: install.lua")
+    print("")
+    SwarmUI.showStatus("Requires HTTP API enabled in server config", "warning")
+end
+
+local function showManualInstructions()
+    print("\n=== Complete Manual Transfer Guide ===")
+    print("")
+    print("Option 1: Wireless Provisioning (RECOMMENDED)")
+    print("  - Use 'Provision turtle' option in this menu")
+    print("  - No disk space limits!")
+    print("  - Fast and reliable")
+    print("")
+    print("Option 2: Copy via in-game disk")
+    showDiskInstructions()
+    
+    print("\nOption 3: Use pastebin (if HTTP enabled)")
+    showPastebinInstructions()
+    
+    print("\nOption 4: Type manually (not recommended)")
+    print("  1. On turtle: edit install.lua")
+    print("  2. Copy-paste the installer content")
+    print("  3. Save (Ctrl+S) and exit (Ctrl+E)")
+    print("  4. Run: install.lua")
+    print("")
+    
+    print("Recovery Mode:")
+    print("  - Create .recovery_mode file to disable auto-start")
+    print("  - Delete .recovery_mode and reboot to re-enable")
+    print("")
+end
+
 local function showSetupInstructions()
-    print("\n=== Provision System Setup ===")
+    print("\n=== Deployment System Setup ===")
     print("")
-    print("Step 1: Get provision_client.lua onto turtles")
-    print("  - Copy provision_client.lua to disk")
-    print("  - Transfer to each turtle via disk")
-    print("  - Small file (~200 lines) - fits easily on disk!")
+    print("Method 1: Wireless Provisioning (RECOMMENDED)")
+    print("  Step 1: Get provision_client.lua onto turtles")
+    print("    - Copy provision_client.lua to disk")
+    print("    - Transfer to each turtle via disk")
+    print("    - Small file (~200 lines) - fits easily on disk!")
     print("")
-    print("Step 2: Start provision client on turtle")
-    print("  - On turtle: provision_client")
-    print("  - Client will wait for server")
+    print("  Step 2: Start provision client on turtle")
+    print("    - On turtle: provision_client")
+    print("    - Client will wait for server")
     print("")
-    print("Step 3: Run this provision server")
-    print("  - Choose 'Discover clients' to find turtles")
-    print("  - Choose 'Provision turtle' to send files")
-    print("  - Select file set (worker/minimal/libraries)")
-    print("  - Files sent wirelessly in chunks")
+    print("  Step 3: Run this provision server")
+    print("    - Choose 'Discover clients' to find turtles")
+    print("    - Choose 'Provision turtle' to send files")
+    print("    - Select file set (worker/minimal/libraries)")
+    print("    - Files sent wirelessly in chunks")
     print("")
-    print("Step 4: After provisioning")
-    print("  - Server can trigger install.lua automatically")
-    print("  - Or manually run install.lua on turtle")
-    print("  - Turtle reboots and becomes worker")
+    print("  Step 4: After provisioning")
+    print("    - Server can trigger install.lua automatically")
+    print("    - Or manually run install.lua on turtle")
+    print("    - Turtle reboots and becomes worker")
     print("")
-    print("Advantages:")
+    print("Method 2: Manual Disk Transfer")
+    print("  - See 'Manual transfer instructions' option")
+    print("")
+    print("Advantages of Wireless Provisioning:")
     print("  - No disk space limits!")
     print("  - Can send full worker package")
     print("  - Updates existing turtles easily")
     print("  - Provision multiple turtles quickly")
     print("")
-    SwarmUI.showStatus("Provision client must be running on turtle first", "info")
+    SwarmUI.showStatus("Provision client must be running on turtle first for wireless method", "info")
 end
 
 local function createQuickStartGuide()
@@ -388,7 +483,7 @@ local function createQuickStartGuide()
         "Version: 1.0"
     }
     
-    local success, err = SwarmCommon.writeFile("PROVISION_GUIDE.txt", table.concat(guide, "\n"))
+    local success, err = SwarmFile.writeFile("PROVISION_GUIDE.txt", table.concat(guide, "\n"))
     if success then
         SwarmUI.showStatus("Created: PROVISION_GUIDE.txt", "success")
     else
@@ -398,16 +493,19 @@ end
 
 -- Main menu
 local function createMainMenu()
-    local menu = SwarmUI.Menu.new("Provision Server v1.0")
+    local menu = SwarmUI.Menu.new("Provision Server v4.0")
     
     menu:addOption("1", "Discover provision clients", discoverClients)
-    menu:addOption("2", "Provision turtle (interactive)", provisionInteractive)
-    menu:addOption("3", "Verify files on turtle", function()
+    menu:addOption("2", "Provision turtle (wireless)", provisionInteractive)
+    menu:addOption("3", "Discover all turtles", discoverTurtles)
+    menu:addOption("4", "Check worker status", checkStatus)
+    menu:addOption("5", "Verify files on turtle", function()
         local id = SwarmUI.promptNumber("Enter turtle ID: ", 1)
         verifyFiles(id)
     end)
-    menu:addOption("4", "Setup instructions", showSetupInstructions)
-    menu:addOption("5", "Create quick start guide", createQuickStartGuide)
+    menu:addOption("6", "Manual transfer instructions", showManualInstructions)
+    menu:addOption("7", "Setup instructions", showSetupInstructions)
+    menu:addOption("8", "Create quick start guide", createQuickStartGuide)
     menu:addOption("0", "Exit", function() return false end)
     
     return menu

@@ -4,6 +4,7 @@
 
 local SwarmCommon = require("lib.swarm_common")
 local SwarmUI = require("lib.swarm_ui")
+local SwarmFile = require("lib.swarm_file")
 
 -- Version information
 local PUPPETMASTER_VERSION = "4.0"
@@ -248,7 +249,7 @@ local function importPrograms()
     print("")
     print("Waiting for files...")
     
-    SwarmCommon.ensureDirectory("programs")
+    SwarmFile.ensureDirectory("programs")
     local importedFiles = {}
     
     local eventHandlers = {
@@ -320,7 +321,7 @@ function provisionProgram(programName)
         return false
     end
     
-    local content, err = SwarmCommon.readFile(programPath)
+    local content, err = SwarmFile.readFile(programPath)
     if not content then
         SwarmUI.showStatus(err, "error")
         return false
@@ -335,7 +336,7 @@ function provisionProgram(programName)
     end
     
     -- Split into chunks
-    local chunks = SwarmCommon.splitIntoChunks(content)
+    local chunks = SwarmFile.splitIntoChunks(content)
     print("Split into " .. #chunks .. " chunks")
     
     -- Send deployment command

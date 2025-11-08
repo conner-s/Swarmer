@@ -1,8 +1,9 @@
 -- Swarm Worker Library
 -- Common functionality for worker turtles and programs
--- Version: 3.0
+-- Version: 4.0
 
 local SwarmCommon = require("lib.swarm_common")
+local SwarmGPS = require("lib.swarm_gps")
 local SwarmWorker = {}
 
 -- Worker constants
@@ -178,7 +179,7 @@ end
 SwarmWorker.position = {x = 0, y = 0, z = 0, facing = 0}
 
 function SwarmWorker.updatePosition()
-    local pos = SwarmCommon.getCurrentPosition()
+    local pos = SwarmGPS.getCurrentPosition()
     if pos then
         SwarmWorker.position.x = pos.x
         SwarmWorker.position.y = pos.y
@@ -192,7 +193,7 @@ end
 
 function SwarmWorker.reportPosition()
     SwarmWorker.updatePosition()
-    local posStr = SwarmCommon.formatPosition(SwarmWorker.position)
+    local posStr = SwarmGPS.formatPosition(SwarmWorker.position)
     SwarmWorker.sendStatus("Position: " .. posStr, true)
 end
 
@@ -395,7 +396,7 @@ function SwarmWorker.initSession(args)
         args = args or {},
         startTime = os.epoch("utc"),
         startFuel = turtle.getFuelLevel(),
-        startPosition = SwarmCommon.getCurrentPosition()
+        startPosition = SwarmGPS.getCurrentPosition()
     }
     
     SwarmWorker.updatePosition()

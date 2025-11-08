@@ -4,6 +4,7 @@
 
 local SwarmWorker = require("lib.swarm_worker_lib")
 local SwarmCommon = require("lib.swarm_common")
+local SwarmGPS = require("lib.swarm_gps")
 
 local Courier = {}
 
@@ -13,14 +14,14 @@ Courier.itemsTransported = 0
 
 -- Navigate to position (simplified - needs GPS)
 function Courier.navigateToPosition(targetPos)
-    local currentPos = SwarmCommon.getCurrentPosition()
+    local currentPos = SwarmGPS.getCurrentPosition()
     if not currentPos then
         return false, "Cannot determine current position (GPS required)"
     end
     
     SwarmWorker.sendStatus(string.format("Navigating from %s to %s", 
-                          SwarmCommon.formatPosition(currentPos),
-                          SwarmCommon.formatPosition(targetPos)), true)
+                          SwarmGPS.formatPosition(currentPos),
+                          SwarmGPS.formatPosition(targetPos)), true)
     
     -- Vertical movement first
     local dy = targetPos.y - currentPos.y

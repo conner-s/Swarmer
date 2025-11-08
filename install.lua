@@ -4,8 +4,9 @@
 
 local WORKER_VERSION = "4.0"
 
--- Load required common library
+-- Load required libraries
 local SwarmCommon = nil
+local SwarmFile = nil
 
 -- First, check if we need to bootstrap library installation from disk
 local function bootstrapLibraryFromDisk()
@@ -68,9 +69,10 @@ local function bootstrapLibraryFromDisk()
     return false
 end
 
--- Try to load library, bootstrap if needed
+-- Try to load libraries, bootstrap if needed
 if fs.exists("lib/swarm_common.lua") then
     SwarmCommon = require("lib.swarm_common")
+    SwarmFile = require("lib.swarm_file")
 else
     -- Try to bootstrap from disk
     print("Library not found locally, checking disk...")
@@ -78,6 +80,7 @@ else
         -- Try loading again after bootstrap
         if fs.exists("lib/swarm_common.lua") then
             SwarmCommon = require("lib.swarm_common")
+            SwarmFile = require("lib.swarm_file")
         else
             error("ERROR: Bootstrap succeeded but swarm_common.lua still not found!")
         end
@@ -212,35 +215,35 @@ local function findSourceFiles()
     local installPath = shell.getRunningProgram()
     local installDir = fs.getDir(installPath)
     local searchPaths = {installDir, "disk", "disk0", "disk1"}
-    return SwarmCommon.findFiles(requiredFiles, searchPaths)
+    return SwarmFile.findFiles(requiredFiles, searchPaths)
 end
 
 local function installWorker(sourceFiles)
-    SwarmCommon.logStep("Installing worker program...", "info")
+    SwarmFile.logStep("Installing worker program...", "info")
     
     local workerSource = sourceFiles["worker.lua"]
     if not workerSource then
-        SwarmCommon.logStep("Worker source not found", "error")
+        SwarmFile.logStep("Worker source not found", "error")
         return false
     end
     
-    local workerCode, err = SwarmCommon.readFile(workerSource)
+    local workerCode, err = SwarmFile.readFile(workerSource)
     if not workerCode then
-        SwarmCommon.logStep("Failed to read worker source", "error")
+        SwarmFile.logStep("Failed to read worker source", "error")
         return false
     end
     
     -- Backup existing worker if present
     if fs.exists("worker.lua") then
-        SwarmCommon.backupFile("worker.lua")
+        SwarmFile.backupFile("worker.lua")
     end
     
-    local success, writeErr = SwarmCommon.writeFile("worker.lua", workerCode)
+    local success, writeErr = SwarmFile.writeFile("worker.lua", workerCode)
     if success then
-        SwarmCommon.logStep("Worker installed (" .. #workerCode .. " bytes)", "ok")
+        SwarmFile.logStep("Worker installed (" .. #workerCode .. " bytes)", "ok")
         return true
     else
-        SwarmCommon.logStep("Failed to write worker", "error")
+        SwarmFile.logStep("Failed to write worker", "error")
         return false
     end
 end
@@ -250,11 +253,11 @@ local function install()
     print("")
     
     -- Step 1: Find all required source files
-    SwarmCommon.logStep("Locating source files...", "info")
+    SwarmFile.logStep("Locating source files...", "info")
     local sourceFiles, missing = findSourceFiles()
     
     if #missing > 0 then
-        SwarmCommon.logStep("ERROR: Missing required files!", "error")
+        SwarmFile.logStep("ERROR: Missing required files!", "error")
         for _, file in ipairs(missing) do
             print("  Missing: " .. file)
         end
@@ -270,7 +273,7 @@ local function install()
     local filesToBackup = {"startup.lua", "worker.lua"}
     for _, file in ipairs(filesToBackup) do
         if fs.exists(file) then
-            SwarmCommon.backupFile(file)
+            SwarmFile.backupFile(file)
         end
     end
     
@@ -291,7 +294,7 @@ local function install()
     end
     
     if allLibsExist then
-        SwarmCommon.logStep("Core libraries already installed, skipping library installation", "ok")
+        SwarmFile.logStep("Core libraries already installed, skipping library installation", "ok")
         
         -- Check for role libraries (optional but recommended)
         local roleLibsExist = fs.exists("lib/roles") and fs.isDir("lib/roles")
@@ -303,40 +306,40 @@ local function install()
                     roleCount = roleCount + 1
                 end
             end
-            SwarmCommon.logStep("Role libraries found: " .. roleCount .. " roles", "ok")
+            SwarmFile.logStep("Role libraries found: " .. roleCount .. " roles", "ok")
         else
-            SwarmCommon.logStep("Note: lib/roles/ directory not found (optional)", "info")
+            SwarmFile.logStep("Note: lib/roles/ directory not found (optional)", "info")
         end
     else
-        if not SwarmCommon.installLibraries(sourceFiles) then
-            SwarmCommon.logStep("Library installation failed", "error")
+        if not SwarmFile.installLibraries(sourceFiles) then
+            SwarmFile.logStep("Library installation failed", "error")
             return false
         end
     end
     
     -- Step 4: Install worker
     if not installWorker(sourceFiles) then
-        SwarmCommon.logStep("Worker installation failed", "error")
+        SwarmFile.logStep("Worker installation failed", "error")
         return false
     end
     
     -- Step 5: Create startup script
-    SwarmCommon.logStep("Creating startup.lua...", "info")
+    SwarmFile.logStep("Creating startup.lua...", "info")
     local startupContent = string.format(STARTUP_TEMPLATE, 
         WORKER_VERSION, os.date("%Y-%m-%d %H:%M:%S"), WORKER_VERSION)
     
-    local success, err = SwarmCommon.writeFile("startup.lua", startupContent)
+    local success, err = SwarmFile.writeFile("startup.lua", startupContent)
     if success then
-        SwarmCommon.logStep("Startup script created", "ok")
+        SwarmFile.logStep("Startup script created", "ok")
     else
-        SwarmCommon.logStep("Failed to write startup.lua", "error")
+        SwarmFile.logStep("Failed to write startup.lua", "error")
         return false
     end
     
     -- Step 6: Create version file and directories
-    local versionSuccess, versionErr = SwarmCommon.writeFile(".worker_version", WORKER_VERSION)
+    local versionSuccess, versionErr = SwarmFile.writeFile(".worker_version", WORKER_VERSION)
     if versionSuccess then
-        SwarmCommon.logStep("Version tracking enabled", "ok")
+        SwarmFile.logStep("Version tracking enabled", "ok")
     end
     
     -- Setup directories
@@ -344,7 +347,7 @@ local function install()
     for _, dir in ipairs(directories) do
         if not fs.exists(dir) then
             fs.makeDir(dir)
-            SwarmCommon.logStep("Created " .. dir .. " directory", "ok")
+            SwarmFile.logStep("Created " .. dir .. " directory", "ok")
         end
     end
     

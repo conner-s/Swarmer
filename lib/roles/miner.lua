@@ -4,6 +4,7 @@
 
 local SwarmWorker = require("lib.swarm_worker_lib")
 local SwarmCommon = require("lib.swarm_common")
+local SwarmGPS = require("lib.swarm_gps")
 
 local Miner = {}
 
@@ -74,7 +75,7 @@ function Miner.navigateToPosition(targetPos, currentPos)
         return false, "Invalid position data"
     end
     
-    SwarmWorker.sendStatus(string.format("Navigating to %s", SwarmCommon.formatPosition(targetPos)), true)
+    SwarmWorker.sendStatus(string.format("Navigating to %s", SwarmGPS.formatPosition(targetPos)), true)
     
     -- Move vertically first (Y axis)
     local dy = targetPos.y - currentPos.y
@@ -130,7 +131,7 @@ function Miner.returnHomeAndDeposit(roleInstance)
     SwarmWorker.sendStatus("Returning to home chest...", true)
     
     -- Get current position
-    local currentPos = SwarmCommon.getCurrentPosition()
+    local currentPos = SwarmGPS.getCurrentPosition()
     if not currentPos then
         return false, "Cannot determine current position (GPS required)"
     end
@@ -158,7 +159,7 @@ function Miner.refuelFromChest(roleInstance)
     SwarmWorker.sendStatus("Going to fuel chest...", true)
     
     -- Get current position
-    local currentPos = SwarmCommon.getCurrentPosition()
+    local currentPos = SwarmGPS.getCurrentPosition()
     if not currentPos then
         return false, "Cannot determine current position (GPS required)"
     end

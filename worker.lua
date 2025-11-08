@@ -6,6 +6,8 @@
 local SwarmCommon = require("lib.swarm_common")
 local SwarmWorker = require("lib.swarm_worker_lib")
 local RoleManager = require("lib.roles")
+local SwarmFile = require("lib.swarm_file")
+local SwarmGPS = require("lib.swarm_gps")
 
 -- Worker configuration
 local WORKER_VERSION = "4.0"
@@ -313,16 +315,16 @@ local function handleProgramChunk(programName, chunkNum, totalChunks, chunkData)
             end
         end
         
-        local content = SwarmCommon.assembleChunks(chunks)
+        local content = SwarmFile.assembleChunks(chunks)
         
         -- Write to programs directory
-        SwarmCommon.ensureDirectory(PROGRAMS_DIR)
+        SwarmFile.ensureDirectory(PROGRAMS_DIR)
         local programPath = PROGRAMS_DIR .. "/" .. programName
         if not programPath:match("%.lua$") then
             programPath = programPath .. ".lua"
         end
         
-        local success, err = SwarmCommon.writeFile(programPath, content)
+        local success, err = SwarmFile.writeFile(programPath, content)
         if success then
             local duration = (os.epoch("utc") - deployment.startTime) / 1000
             sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
@@ -352,8 +354,8 @@ local commandHandlers = {
     status = function(args, targetId)
         print("Command: status")
         local fuel = turtle.getFuelLevel()
-        local position = SwarmCommon.getCurrentPosition()
-        local posStr = SwarmCommon.formatPosition(position)
+        local position = SwarmGPS.getCurrentPosition()
+        local posStr = SwarmGPS.formatPosition(position)
         sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, 
                    "Fuel: " .. tostring(fuel) .. " | Pos: " .. posStr, nil, true)
     end,
@@ -572,7 +574,7 @@ local commandHandlers = {
 }
 
 -- Initialize worker environment
-SwarmCommon.ensureDirectory(PROGRAMS_DIR)
+SwarmFile.ensureDirectory(PROGRAMS_DIR)
 sendMessage(SwarmCommon.MESSAGE_TYPES.STATUS, "Worker ready", nil, true)
 
 -- Main command processing loop

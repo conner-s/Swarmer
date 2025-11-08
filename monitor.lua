@@ -1,4 +1,4 @@
--- Turtle Fleet Monitor v3.0
+-- Turtle Fleet Monitor v4.0
 -- Displays turtle positions and IDs on a monitor
 -- Refactored to use common libraries
 
@@ -48,6 +48,7 @@ end
 
 local SwarmCommon = require("lib.swarm_common")
 local SwarmUI = require("lib.swarm_ui")
+local SwarmGPS = require("lib.swarm_gps")
 
 -- Load RoleManager to get role colors
 local RoleManager = nil
@@ -167,7 +168,7 @@ local function updateDisplay()
         monitor.setTextColor(SwarmUI.THEME.positionText)
         
         local position = {x = entry.data.x, y = entry.data.y, z = entry.data.z}
-        local posText = SwarmCommon.formatPosition(position)
+        local posText = SwarmGPS.formatPosition(position)
         
         if entry.data.x then
             if #posText > (monWidth - 18) then
@@ -259,7 +260,7 @@ local waitText = "Initializing..."
 monitor.setCursorPos(math.floor((monWidth - #waitText) / 2), math.floor(monHeight / 2))
 monitor.write(waitText)
 
-print("Fleet Monitor v3.0 started")
+print("Fleet Monitor v4.0 started")
 print("Monitoring " .. monWidth .. "x" .. monHeight .. " display")
 print("Press Ctrl+T to exit")
 

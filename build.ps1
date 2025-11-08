@@ -4,7 +4,7 @@
 
 param(
     [string]$DeploymentName = "swarm_$(Get-Date -Format 'yyyyMMdd_HHmmss')",
-    [ValidateSet("all", "server", "provision", "worker")]
+    [ValidateSet("all", "server", "worker")]
     [string]$Target = "all"
 )
 
@@ -19,49 +19,48 @@ Write-Host "Deployment Name: $DeploymentName" -ForegroundColor Yellow
 Write-Host "Target: $Target" -ForegroundColor Yellow
 Write-Host ""
 
-# Define file sets for each deployment type
+# Define file sets for each deployment type (consolidated to 2 packages)
 $ServerFiles = @(
+    # Server control programs
     "puppetmaster.lua",
     "monitor.lua",
     "fleet_manager.lua",
+    "provision_server.lua",
+    "deploy.lua",
+    
+    # Server libraries
     "lib/swarm_common.lua",
+    "lib/swarm_file.lua",
+    "lib/swarm_gps.lua",
+    "lib/swarm_config.lua",
+    "lib/swarm_init.lua",
+    "lib/swarm_programs.lua",
     "lib/swarm_ui.lua",
     "lib/roles.lua"
 )
 
-$ProvisionFiles = @(
-    # Server control files
-    "provision_server.lua",
-    "distribute.lua",
-    
-    # Server libraries
-    "lib/swarm_common.lua",
-    "lib/swarm_ui.lua",
-    "lib/roles.lua",
-    
-    # Worker files (to provision to turtles)
-    "worker.lua",
-    "install.lua",
-    "lib/swarm_worker_lib.lua",
-    "lib/roles/miner.lua",
-    "lib/roles/courier.lua",
-    "lib/roles/builder.lua",
-    "programs/digDown.lua",
-    "programs/stairs.lua",
-    "programs/hello.lua"
-)
-
 $WorkerFiles = @(
+    # Worker programs
     "provision_client.lua",
     "worker.lua",
     "install.lua",
+    
+    # Worker libraries (all required)
     "lib/swarm_common.lua",
+    "lib/swarm_file.lua",
+    "lib/swarm_gps.lua",
+    "lib/swarm_config.lua",
+    "lib/swarm_init.lua",
     "lib/swarm_worker_lib.lua",
     "lib/swarm_ui.lua",
     "lib/roles.lua",
+    
+    # Role libraries
     "lib/roles/miner.lua",
     "lib/roles/courier.lua",
     "lib/roles/builder.lua",
+    
+    # Sample programs
     "programs/digDown.lua",
     "programs/stairs.lua",
     "programs/hello.lua"
@@ -251,40 +250,20 @@ print("4. Run 'monitor.lua' on advanced computer with monitor")
 
 $(if ($PackageName -eq "server") {
 @"
-SERVER PACKAGE - For control computers (Puppetmaster/Monitor):
+SERVER PACKAGE - For control computers (Puppetmaster/Monitor/Provision):
 - puppetmaster.lua - Main control interface (Advanced Pocket Computer)
 - monitor.lua - Fleet monitoring display (Advanced Computer + Monitor)
 - fleet_manager.lua - Fleet management backend
-- Required libraries (swarm_common, swarm_ui, roles)
+- provision_server.lua - Wireless file provisioning system (v4.0 - includes distribute functionality)
+- deploy.lua - Unified deployment entry point
+- Required libraries (swarm_common, swarm_file, swarm_gps, swarm_config, swarm_init, swarm_programs, swarm_ui, roles)
 
 After deployment:
 - Run ``puppetmaster`` on Advanced Pocket Computer
 - Run ``monitor`` on Advanced Computer with attached monitor
+- Run ``deploy`` or ``provision_server`` for turtle deployment
 
-NOTE: This package does NOT include provision_server. Use 'provision' package for wireless provisioning.
-"@
-} elseif ($PackageName -eq "provision") {
-@"
-PROVISION PACKAGE - For wireless turtle provisioning:
-- provision_server.lua - Wireless file provisioning system
-- distribute.lua - File distribution utility
-- Required libraries (swarm_common, swarm_ui, roles)
-
-WORKER FILES INCLUDED (to send to turtles):
-- worker.lua, install.lua
-- All worker libraries (swarm_worker_lib)
-- All role libraries (miner, courier, builder)
-- Sample programs (digDown, stairs, hello)
-
-After deployment:
-- Run ``provision_server`` to wirelessly provision turtles
-- Sends complete worker package without disk space limits!
-
-USAGE:
-1. Copy provision_client.lua to turtle via disk (tiny file!)
-2. On turtle: provision_client
-3. On this computer: provision_server
-4. Select turtle and file set to provision
+NOTE: This package includes all server tools including wireless provisioning.
 "@
 } else {
 @"
@@ -337,10 +316,6 @@ if ($Target -eq "all" -or $Target -eq "server") {
     $totalFiles += Build-Package -PackageName "server" -FilesToDeploy $ServerFiles -Description "Server Control"
 }
 
-if ($Target -eq "all" -or $Target -eq "provision") {
-    $totalFiles += Build-Package -PackageName "provision" -FilesToDeploy $ProvisionFiles -Description "Provision System"
-}
-
 if ($Target -eq "all" -or $Target -eq "worker") {
     $totalFiles += Build-Package -PackageName "worker" -FilesToDeploy $WorkerFiles -Description "Worker Turtles"
 }
@@ -350,12 +325,11 @@ Write-Host "Deployment: deployment\$DeploymentName" -ForegroundColor Cyan
 Write-Host "Total files: $totalFiles" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Package Descriptions:" -ForegroundColor Yellow
-Write-Host "  server     - Puppetmaster, monitor, fleet manager (6 files)" -ForegroundColor White
-Write-Host "  provision  - Wireless provisioning with all worker files (15 files)" -ForegroundColor White
-Write-Host "  worker     - Turtle setup with provision_client (13 files)" -ForegroundColor White
+Write-Host "  server     - All server tools (puppetmaster, monitor, fleet_manager, provision_server, deploy)" -ForegroundColor White
+Write-Host "  worker     - Complete turtle package (worker, install, provision_client, all libraries)" -ForegroundColor White
 Write-Host ""
 Write-Host "Recommended Workflow:" -ForegroundColor Yellow
-Write-Host "1. Copy 'provision' package to control computer" -ForegroundColor White
+Write-Host "1. Copy 'server' package to control computer" -ForegroundColor White
 Write-Host "2. Copy ONLY provision_client.lua from 'worker' package to turtle disk" -ForegroundColor White
 Write-Host "3. Run provision_client on turtle, provision_server on control computer" -ForegroundColor White
 Write-Host "4. Wirelessly provision complete worker package" -ForegroundColor White

@@ -4,6 +4,7 @@
 
 local SwarmWorker = require("lib.swarm_worker_lib")
 local SwarmCommon = require("lib.swarm_common")
+local SwarmGPS = require("lib.swarm_gps")
 
 local Builder = {}
 
@@ -237,7 +238,7 @@ function Builder.resupplyMaterials(roleInstance)
     SwarmWorker.sendStatus("Resupplying materials...", true)
     
     -- Navigate to material chest (simplified)
-    local currentPos = SwarmCommon.getCurrentPosition()
+    local currentPos = SwarmGPS.getCurrentPosition()
     if not currentPos then
         return false, "Cannot determine position (GPS required)"
     end

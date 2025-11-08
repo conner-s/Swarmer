@@ -3,6 +3,7 @@
 -- Version: 4.0
 
 local SwarmCommon = require("lib.swarm_common")
+local SwarmConfig = require("lib.swarm_config")
 
 local RoleManager = {}
 
@@ -189,7 +190,7 @@ function RoleManager.saveRole(roleInstance)
     end
     
     local data = roleInstance:toTable()
-    local success = SwarmCommon.writeJSON(RoleManager.ROLE_CONFIG_FILE, data)
+    local success = SwarmConfig.writeJSON(RoleManager.ROLE_CONFIG_FILE, data)
     
     if success then
         RoleManager.currentRole = roleInstance
@@ -204,7 +205,7 @@ function RoleManager.loadRole()
         return nil, "No role assigned"
     end
     
-    local data = SwarmCommon.readJSON(RoleManager.ROLE_CONFIG_FILE)
+    local data = SwarmConfig.readJSON(RoleManager.ROLE_CONFIG_FILE)
     if not data or not data.roleId then
         return nil, "Invalid role configuration"
     end

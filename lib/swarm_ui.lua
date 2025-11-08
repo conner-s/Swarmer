@@ -1,6 +1,6 @@
 -- Swarm UI Library
 -- UI components and multishell management for swarm programs
--- Version: 3.0
+-- Version: 4.0
 
 local SwarmCommon = require("lib.swarm_common")
 local SwarmUI = {}
@@ -331,15 +331,19 @@ end
 function SwarmUI.promptChoice(prompt, choices)
     while true do
         write(prompt .. " (" .. table.concat(choices, "/") .. "): ")
-        local input = read():lower()
-        
-        for _, choice in ipairs(choices) do
-            if input == choice:lower() then
-                return choice
+        local input = read()
+        if input ~= nil then
+            input = input:lower()
+            for _, choice in ipairs(choices) do
+                if input == choice:lower() then
+                    return choice
+                end
             end
+            
+            SwarmUI.showStatus("Invalid choice. Please select from: " .. table.concat(choices, ", "), "error")
+        else
+            SwarmUI.showStatus("Invalid input. Please try again.", "error")
         end
-        
-        SwarmUI.showStatus("Invalid choice. Please select from: " .. table.concat(choices, ", "), "error")
     end
 end
 
@@ -390,17 +394,28 @@ function SwarmUI.drawMonitorHeader(monitor, title)
 end
 
 -- List display utilities
+---@param items table
+---@param formatter fun(item: any, index?: number): string
+---@param startLine number?
 function SwarmUI.displayList(items, formatter, startLine)
     startLine = startLine or select(2, term.getCursorPos())
     
+    local isDefaultFormatter = false
     if not formatter then
         formatter = tostring
+        isDefaultFormatter = true
     end
     
     for i, item in ipairs(items) do
         term.setCursorPos(1, startLine + i - 1)
         term.clearLine()
-        print(formatter(item, i))
+        local formatted
+        if isDefaultFormatter then
+            formatted = formatter(item)
+        else
+            formatted = formatter(item, i)
+        end
+        print(formatted)
     end
 end
 
